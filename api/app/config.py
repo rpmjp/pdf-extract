@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin"
     minio_bucket: str = "documents"
+    llm_backend: str = "ollama"
+    llm_base_url: str = "http://host.docker.internal:11434/v1"
+    llm_model: str = "qwen2.5vl:7b"
 
     @property
     def minio_endpoint(self) -> str:

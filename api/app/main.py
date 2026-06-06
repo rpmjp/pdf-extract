@@ -8,6 +8,7 @@ from .config import settings
 from .models import Document
 from .storage import ensure_bucket, put_object, get_object
 from .extract import classify_and_extract
+from .llm import extract_statement
 
 app = FastAPI(title="PDF Extract API")
 engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -84,5 +85,20 @@ def extract_document(doc_id: int):
             "pages": len(result["pages"]),
             "preview": result["pages"][0]["text"][:300] if result["pages"] else "",
         }
+    finally:
+        db.close()
+
+@app.post("/documents/{doc_id}/parse")
+def parse_document(doc_id: int):
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter_by(id=doc_id).first()
+        if not doc:
+            raise HTTPException(404, "Document not found")
+        pdf_bytes = get_object(doc.minio_key)
+        extracted = classify_and_extract(pdf_bytes)
+        text = "\n\n".join(p["text"] for p in extracted["pages"])
+        result = extract_statement(text)
+        return result.model_dump()
     finally:
         db.close()
