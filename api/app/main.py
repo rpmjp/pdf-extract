@@ -97,6 +97,48 @@ def list_documents():
         db.close()
 
 
+@app.get("/documents/{doc_id}")
+def get_document(doc_id: int):
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter_by(id=doc_id).first()
+        if not doc:
+            raise HTTPException(404, "Document not found")
+
+        transactions = db.query(Transaction).filter_by(document_id=doc.id).order_by(Transaction.id).all()
+        review_items = db.query(ReviewItem).filter_by(document_id=doc.id).order_by(ReviewItem.id).all()
+
+        return {
+            "id": doc.id,
+            "filename": doc.filename,
+            "status": doc.status,
+            "sha256": doc.sha256,
+            "created_at": doc.created_at.isoformat(),
+            "transactions": [
+                {
+                    "id": t.id,
+                    "date": t.txn_date,
+                    "description": t.description,
+                    "amount": float(t.amount),
+                    "type": t.type,
+                    "balance": float(t.balance) if t.balance is not None else None,
+                }
+                for t in transactions
+            ],
+            "review_items": [
+                {
+                    "id": item.id,
+                    "reason": item.reason,
+                    "status": item.status,
+                    "created_at": item.created_at.isoformat(),
+                }
+                for item in review_items
+            ],
+        }
+    finally:
+        db.close()
+
+
 @app.post("/documents/{doc_id}/extract")
 def extract_document(doc_id: int):
     db = SessionLocal()

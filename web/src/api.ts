@@ -11,9 +11,11 @@ export interface Document {
   filename: string;
   sha256: string;
   status: DocStatus;
+  created_at?: string;
 }
 
 export interface Transaction {
+  id?: number;
   date: string;
   description: string;
   amount: number;
@@ -41,4 +43,17 @@ export interface ParseResponse {
     checks: { name: string; passed: boolean; detail: string }[];
   };
   extraction: Extraction;
+}
+
+export interface ReviewItem {
+  id: number;
+  reason: string;
+  status: string;
+  created_at: string;
+}
+
+export interface DocumentDetail extends Document {
+  created_at: string;
+  transactions: Transaction[];
+  review_items: ReviewItem[];
 }
