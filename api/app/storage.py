@@ -21,3 +21,7 @@ def put_object(key: str, data: bytes, content_type: str = "application/pdf"):
     s3.put_object(
         Bucket=settings.minio_bucket, Key=key, Body=data, ContentType=content_type
     )
+    
+def get_object(key: str) -> bytes:
+    resp = s3.get_object(Bucket=settings.minio_bucket, Key=key)
+    return resp["Body"].read()

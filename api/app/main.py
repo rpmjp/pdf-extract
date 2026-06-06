@@ -6,7 +6,8 @@ import redis
 
 from .config import settings
 from .models import Document
-from .storage import ensure_bucket, put_object
+from .storage import ensure_bucket, put_object, get_object
+from .extract import classify_and_extract
 
 app = FastAPI(title="PDF Extract API")
 engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -63,5 +64,25 @@ async def upload_document(file: UploadFile = File(...)):
         db.commit()
         db.refresh(doc)
         return {"id": doc.id, "filename": doc.filename, "sha256": sha256, "status": doc.status}
+    finally:
+        db.close()
+        
+@app.post("/documents/{doc_id}/extract")
+def extract_document(doc_id: int):
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter_by(id=doc_id).first()
+        if not doc:
+            raise HTTPException(404, "Document not found")
+        pdf_bytes = get_object(doc.minio_key)
+        result = classify_and_extract(pdf_bytes)
+        doc.status = f"extracted:{result['kind']}"
+        db.commit()
+        return {
+            "id": doc.id,
+            "kind": result["kind"],
+            "pages": len(result["pages"]),
+            "preview": result["pages"][0]["text"][:300] if result["pages"] else "",
+        }
     finally:
         db.close()
