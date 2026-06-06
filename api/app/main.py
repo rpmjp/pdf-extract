@@ -5,11 +5,12 @@ from sqlalchemy.orm import sessionmaker
 import redis
 
 from .config import settings
-from .models import Document
+from .models import Document, Transaction, ReviewItem
 from .storage import ensure_bucket, put_object, get_object
 from .extract import classify_and_extract
 from .llm import extract_statement
 from .reconcile import reconcile
+
 
 app = FastAPI(title="PDF Extract API")
 engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -102,6 +103,27 @@ def parse_document(doc_id: int):
         result = extract_statement(text)
         recon = reconcile(result)
         doc.status = "verified" if recon["passed"] else "needs_review"
+
+        # Clear any prior rows for this doc (re-parse is idempotent)
+        db.query(Transaction).filter_by(document_id=doc.id).delete()
+        db.query(ReviewItem).filter_by(document_id=doc.id).delete()
+
+        # Persist transactions
+        for t in result.transactions:
+            db.add(Transaction(
+                document_id=doc.id,
+                txn_date=t.date,
+                description=t.description,
+                amount=t.amount,
+                type=t.type,
+                balance=t.balance,
+            ))
+
+        # If it failed the gate, open a review item
+        if not recon["passed"]:
+            failed = [c["detail"] for c in recon["checks"] if not c["passed"]]
+            db.add(ReviewItem(document_id=doc.id, reason="; ".join(failed)))
+
         db.commit()
         return {
             "id": doc.id,
