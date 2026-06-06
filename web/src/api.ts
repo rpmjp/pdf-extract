@@ -1,0 +1,44 @@
+import axios from "axios";
+
+const baseURL = import.meta.env.VITE_API_URL || "http://localhost:8003";
+
+export const api = axios.create({ baseURL });
+
+export type DocStatus = "uploaded" | "extracted:digital" | "extracted:scanned" | "verified" | "needs_review";
+
+export interface Document {
+  id: number;
+  filename: string;
+  sha256: string;
+  status: DocStatus;
+}
+
+export interface Transaction {
+  date: string;
+  description: string;
+  amount: number;
+  type: "deposit" | "withdrawal";
+  balance: number | null;
+}
+
+export interface Extraction {
+  account_holder: string | null;
+  account_number: string | null;
+  statement_period: string | null;
+  opening_balance: number | null;
+  closing_balance: number | null;
+  transactions: Transaction[];
+}
+
+export interface ParseResponse {
+  id: number;
+  status: DocStatus;
+  reconciliation: {
+    passed: boolean;
+    deposits_total: number;
+    withdrawals_total: number;
+    sign_corrections: number;
+    checks: { name: string; passed: boolean; detail: string }[];
+  };
+  extraction: Extraction;
+}

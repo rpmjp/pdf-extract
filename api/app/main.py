@@ -1,5 +1,6 @@
 import hashlib
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import redis
@@ -11,8 +12,14 @@ from .extract import classify_and_extract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
 from .reconcile import reconcile, correct_signs_from_balances
 
-
 app = FastAPI(title="PDF Extract API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
 
@@ -69,7 +76,27 @@ async def upload_document(file: UploadFile = File(...)):
         return {"id": doc.id, "filename": doc.filename, "sha256": sha256, "status": doc.status}
     finally:
         db.close()
-        
+
+
+@app.get("/documents")
+def list_documents():
+    db = SessionLocal()
+    try:
+        docs = db.query(Document).order_by(Document.id.desc()).all()
+        return [
+            {
+                "id": d.id,
+                "filename": d.filename,
+                "status": d.status,
+                "sha256": d.sha256,
+                "created_at": d.created_at.isoformat(),
+            }
+            for d in docs
+        ]
+    finally:
+        db.close()
+
+
 @app.post("/documents/{doc_id}/extract")
 def extract_document(doc_id: int):
     db = SessionLocal()
@@ -89,6 +116,7 @@ def extract_document(doc_id: int):
         }
     finally:
         db.close()
+
 
 @app.post("/documents/{doc_id}/parse")
 def parse_document(doc_id: int):
@@ -110,11 +138,9 @@ def parse_document(doc_id: int):
         recon["sign_corrections"] = corrections
         doc.status = "verified" if recon["passed"] else "needs_review"
 
-        # Clear any prior rows for this doc (re-parse is idempotent)
         db.query(Transaction).filter_by(document_id=doc.id).delete()
         db.query(ReviewItem).filter_by(document_id=doc.id).delete()
 
-        # Persist transactions
         for t in result.transactions:
             db.add(Transaction(
                 document_id=doc.id,
@@ -125,7 +151,6 @@ def parse_document(doc_id: int):
                 balance=t.balance,
             ))
 
-        # If it failed the gate, open a review item
         if not recon["passed"]:
             failed = [c["detail"] for c in recon["checks"] if not c["passed"]]
             db.add(ReviewItem(document_id=doc.id, reason="; ".join(failed)))
