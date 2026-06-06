@@ -1,5 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
+import AccountCard from "../components/AccountCard";
+import PdfViewer from "../components/PdfViewer";
+import ReconciliationPanel from "../components/ReconciliationPanel";
+import TransactionsTable from "../components/TransactionsTable";
 import { api, type DocumentDetail } from "../api";
 
 function StatusBadge({ status }: { status: string }) {
@@ -12,11 +16,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`rounded px-2 py-0.5 text-xs font-medium ${cls}`}>{status}</span>;
 }
 
-function formatMoney(value: number | null) {
-  if (value === null) return "—";
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
-}
-
 export default function DocumentPage() {
   const { id } = useParams();
   const { data, isLoading, error } = useQuery({
@@ -26,63 +25,46 @@ export default function DocumentPage() {
   });
 
   if (isLoading) return <p className="text-slate-500">Loading...</p>;
-  if (error || !data) return <p className="text-rose-600">Failed to load document.</p>;
+  if (error || !data || !id) return <p className="text-rose-600">Failed to load document.</p>;
+
+  const pdfUrl = `${api.defaults.baseURL}/documents/${id}/file`;
 
   return (
-    <div>
-      <Link to="/" className="text-sm font-medium text-slate-600 hover:text-slate-900">
-        Back to documents
-      </Link>
+    <div className="flex h-[calc(100vh-8rem)] min-h-[720px] flex-col">
+      <div className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 pb-4">
+        <Link to="/" className="text-sm font-medium text-slate-600 hover:text-slate-900">
+          Back to documents
+        </Link>
 
-      <div className="mt-4 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold text-slate-900">{data.filename}</h1>
-          <p className="mt-1 text-sm text-slate-500">Document #{data.id}</p>
+        <div className="mt-4 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-slate-900">{data.filename}</h1>
+            <p className="mt-1 text-sm text-slate-500">Document #{data.id}</p>
+          </div>
+          <StatusBadge status={data.status} />
         </div>
-        <StatusBadge status={data.status} />
       </div>
 
-      {data.review_items.length > 0 && (
-        <div className="mt-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-          <p className="font-medium">Review items</p>
-          <ul className="mt-2 space-y-1">
-            {data.review_items.map((item) => (
-              <li key={item.id}>{item.reason}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+      <div className="grid min-h-0 flex-1 gap-6 pt-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)]">
+        <PdfViewer url={pdfUrl} />
 
-      <div className="mt-6 rounded-lg border border-slate-200 bg-white">
-        <div className="border-b border-slate-200 px-4 py-3">
-          <h2 className="font-semibold text-slate-900">Transactions</h2>
-        </div>
-        {data.transactions.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-slate-500">No transactions parsed yet.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-4 py-3 text-left">Date</th>
-                  <th className="px-4 py-3 text-left">Description</th>
-                  <th className="px-4 py-3 text-right">Amount</th>
-                  <th className="px-4 py-3 text-right">Balance</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.transactions.map((transaction) => (
-                  <tr key={transaction.id} className="border-t border-slate-100">
-                    <td className="whitespace-nowrap px-4 py-3 text-slate-500">{transaction.date}</td>
-                    <td className="px-4 py-3">{transaction.description}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right">{formatMoney(transaction.amount)}</td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right text-slate-500">{formatMoney(transaction.balance)}</td>
-                  </tr>
+        <div className="min-h-0 space-y-5 overflow-y-auto pr-1">
+          <AccountCard document={data} />
+          <ReconciliationPanel reconciliation={data.reconciliation} />
+
+          {data.review_items.length > 0 && (
+            <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <h2 className="font-semibold">Review items</h2>
+              <ul className="mt-2 space-y-1">
+                {data.review_items.map((item) => (
+                  <li key={item.id}>{item.reason}</li>
                 ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+              </ul>
+            </section>
+          )}
+
+          <TransactionsTable transactions={data.transactions} />
+        </div>
       </div>
     </div>
   );

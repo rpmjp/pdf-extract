@@ -12,6 +12,11 @@ export interface Document {
   sha256: string;
   status: DocStatus;
   created_at?: string;
+  account_holder?: string | null;
+  account_number?: string | null;
+  statement_period?: string | null;
+  opening_balance?: number | null;
+  closing_balance?: number | null;
 }
 
 export interface Transaction {
@@ -54,6 +59,12 @@ export interface ReviewItem {
 
 export interface DocumentDetail extends Document {
   created_at: string;
+  account_holder: string | null;
+  account_number: string | null;
+  statement_period: string | null;
+  opening_balance: number | null;
+  closing_balance: number | null;
+  reconciliation: ParseResponse["reconciliation"];
   transactions: Transaction[];
   review_items: ReviewItem[];
 }

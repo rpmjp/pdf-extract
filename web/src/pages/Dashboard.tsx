@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { api, type Document } from "../api";
 
 function StatusBadge({ status }: { status: string }) {
@@ -12,6 +13,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function Dashboard() {
+  const navigate = useNavigate();
   const { data, isLoading, error } = useQuery({
     queryKey: ["documents"],
     queryFn: async () => (await api.get<Document[]>("/documents")).data,
@@ -34,7 +36,11 @@ export default function Dashboard() {
           </thead>
           <tbody>
             {data?.map((d) => (
-              <tr key={d.id} className="border-t border-slate-100">
+              <tr
+                key={d.id}
+                onClick={() => navigate(`/documents/${d.id}`)}
+                className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
+              >
                 <td className="px-4 py-3 text-slate-500">#{d.id}</td>
                 <td className="px-4 py-3">{d.filename}</td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>

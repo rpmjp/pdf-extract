@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import String, DateTime, ForeignKey, Numeric, Date, Integer, Text
+from sqlalchemy import String, DateTime, ForeignKey, Numeric, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -15,6 +15,11 @@ class Document(Base):
     sha256: Mapped[str] = mapped_column(String(64), unique=True)
     minio_key: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="uploaded")
+    account_holder: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    account_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    statement_period: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    opening_balance: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    closing_balance: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
