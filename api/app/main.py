@@ -7,8 +7,8 @@ import redis
 from .config import settings
 from .models import Document, Transaction, ReviewItem
 from .storage import ensure_bucket, put_object, get_object
-from .extract import classify_and_extract
-from .llm import extract_statement
+from .extract import classify_and_extract, render_pages_to_images
+from .llm import extract_statement, extract_statement_from_images
 from .reconcile import reconcile
 
 
@@ -99,8 +99,12 @@ def parse_document(doc_id: int):
             raise HTTPException(404, "Document not found")
         pdf_bytes = get_object(doc.minio_key)
         extracted = classify_and_extract(pdf_bytes)
-        text = "\n\n".join(p["text"] for p in extracted["pages"])
-        result = extract_statement(text)
+        if extracted["kind"] == "digital":
+            text = "\n\n".join(p["text"] for p in extracted["pages"])
+            result = extract_statement(text)
+        else:
+            images = render_pages_to_images(pdf_bytes)
+            result = extract_statement_from_images(images)
         recon = reconcile(result)
         doc.status = "verified" if recon["passed"] else "needs_review"
 

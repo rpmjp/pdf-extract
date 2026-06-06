@@ -44,3 +44,29 @@ def extract_statement(text: str) -> StatementExtraction:
         body = json.loads(resp.read())
     content = body["message"]["content"]
     return StatementExtraction.model_validate_json(content)
+
+def extract_statement_from_images(images_b64: list[str]) -> StatementExtraction:
+    """Extract a statement directly from page images (for scanned PDFs)."""
+    payload = {
+        "model": settings.llm_model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": "Extract this bank statement from the page image(s).",
+                "images": images_b64,
+            },
+        ],
+        "stream": False,
+        "format": StatementExtraction.model_json_schema(),
+        "options": {"temperature": 0},
+    }
+    req = urllib.request.Request(
+        OLLAMA_URL,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        body = json.loads(resp.read())
+    content = body["message"]["content"]
+    return StatementExtraction.model_validate_json(content)
