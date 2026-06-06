@@ -5,13 +5,23 @@ from .schemas import StatementExtraction
 
 OLLAMA_URL = "http://host.docker.internal:11434/api/chat"
 
-SYSTEM_PROMPT = """You extract structured data from bank statements.
-Return ONLY valid JSON matching the schema. Rules:
-- amount is always POSITIVE; use the type field for direction.
+SYSTEM_PROMPT = """You extract structured data from bank statements into JSON.
+
+Extract BOTH:
+1. Account header fields (usually at the top): account_holder, account_number,
+   statement_period, opening_balance, closing_balance.
+2. Every transaction row in the table.
+
+Transaction rules:
+- amount is always POSITIVE; the type field carries direction.
 - type is "deposit" for money in, "withdrawal" for money out.
-- Use the debit/credit column or sign to decide type.
+- Decide type from the column the value sits in (Deposit vs Withdrawal),
+  or from the sign if a single signed amount column is used.
+- balance is the running balance shown on that row; include it if present.
 - dates in YYYY-MM-DD format.
-- Do not invent transactions. Only extract what is present."""
+- Do not invent transactions or values. Only extract what is present.
+- opening_balance and closing_balance are the statement's stated totals,
+  not transaction amounts."""
 
 
 def extract_statement(text: str) -> StatementExtraction:
