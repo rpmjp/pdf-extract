@@ -1,12 +1,13 @@
 import hashlib
 from fastapi import FastAPI, UploadFile, File, HTTPException, Response, Header
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import redis
 
 from .config import settings
-from .models import Document, Transaction, ReviewItem
+from .models import AuditLog, Document, Transaction, ReviewItem
 from .storage import ensure_bucket, put_object, get_object
 from .extract import classify_and_extract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
@@ -24,6 +25,18 @@ app.add_middleware(
 
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
+
+
+class TransactionUpdate(BaseModel):
+    date: str
+    description: str
+    amount: float
+    type: str
+    balance: float | None = None
+
+
+class RejectRequest(BaseModel):
+    reason: str | None = None
 
 
 def serialize_document(doc: Document) -> dict:
@@ -59,6 +72,54 @@ def extraction_from_persisted(doc: Document, transactions: list[Transaction]) ->
             for t in transactions
         ],
     )
+
+
+def serialize_transaction(t: Transaction) -> dict:
+    return {
+        "id": t.id,
+        "date": t.txn_date,
+        "description": t.description,
+        "amount": float(t.amount),
+        "type": t.type,
+        "balance": float(t.balance) if t.balance is not None else None,
+    }
+
+
+def serialize_review_item(item: ReviewItem) -> dict:
+    return {
+        "id": item.id,
+        "reason": item.reason,
+        "status": item.status,
+        "created_at": item.created_at.isoformat(),
+    }
+
+
+def serialize_audit_log(entry: AuditLog) -> dict:
+    return {
+        "id": entry.id,
+        "document_id": entry.document_id,
+        "action": entry.action,
+        "details": entry.details,
+        "actor": entry.actor,
+        "created_at": entry.created_at.isoformat(),
+    }
+
+
+def add_audit(db, doc_id: int, action: str, details: dict):
+    db.add(AuditLog(document_id=doc_id, action=action, details=details, actor="reviewer"))
+
+
+def recompute_review_items(db, doc: Document, transactions: list[Transaction]) -> dict:
+    extraction = extraction_from_persisted(doc, transactions)
+    recon = reconcile(extraction)
+    recon["sign_corrections"] = 0
+
+    db.query(ReviewItem).filter_by(document_id=doc.id, status="open").delete()
+    if not recon["passed"]:
+        failed = [c["detail"] for c in recon["checks"] if not c["passed"]]
+        db.add(ReviewItem(document_id=doc.id, reason="; ".join(failed)))
+
+    return recon
 
 
 @app.on_event("startup")
@@ -119,7 +180,7 @@ async def upload_document(file: UploadFile = File(...)):
 def list_documents():
     db = SessionLocal()
     try:
-        docs = db.query(Document).order_by(Document.id.desc()).all()
+        docs = db.query(Document).filter(Document.status != "rejected").order_by(Document.id.desc()).all()
         return [
             {
                 "id": d.id,
@@ -144,6 +205,7 @@ def get_document(doc_id: int):
 
         transactions = db.query(Transaction).filter_by(document_id=doc.id).order_by(Transaction.id).all()
         review_items = db.query(ReviewItem).filter_by(document_id=doc.id).order_by(ReviewItem.id).all()
+        audit_log = db.query(AuditLog).filter_by(document_id=doc.id).order_by(AuditLog.created_at.desc()).all()
 
         extraction = extraction_from_persisted(doc, transactions)
         recon = reconcile(extraction)
@@ -160,27 +222,93 @@ def get_document(doc_id: int):
         return {
             **serialize_document(doc),
             "reconciliation": recon,
-            "transactions": [
-                {
-                    "id": t.id,
-                    "date": t.txn_date,
-                    "description": t.description,
-                    "amount": float(t.amount),
-                    "type": t.type,
-                    "balance": float(t.balance) if t.balance is not None else None,
-                }
-                for t in transactions
-            ],
-            "review_items": [
-                {
-                    "id": item.id,
-                    "reason": item.reason,
-                    "status": item.status,
-                    "created_at": item.created_at.isoformat(),
-                }
-                for item in review_items
-            ],
+            "transactions": [serialize_transaction(t) for t in transactions],
+            "review_items": [serialize_review_item(item) for item in review_items],
+            "audit_log": [serialize_audit_log(entry) for entry in audit_log],
         }
+    finally:
+        db.close()
+
+
+@app.patch("/documents/{doc_id}/transactions/{txn_id}")
+def update_transaction(doc_id: int, txn_id: int, payload: TransactionUpdate):
+    if payload.type not in {"deposit", "withdrawal"}:
+        raise HTTPException(400, "Transaction type must be deposit or withdrawal")
+
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter_by(id=doc_id).first()
+        if not doc:
+            raise HTTPException(404, "Document not found")
+
+        txn = db.query(Transaction).filter_by(id=txn_id, document_id=doc.id).first()
+        if not txn:
+            raise HTTPException(404, "Transaction not found")
+
+        before = serialize_transaction(txn)
+        txn.txn_date = payload.date
+        txn.description = payload.description
+        txn.amount = payload.amount
+        txn.type = payload.type
+        txn.balance = payload.balance
+        after = serialize_transaction(txn)
+
+        transactions = db.query(Transaction).filter_by(document_id=doc.id).order_by(Transaction.id).all()
+        recon = recompute_review_items(db, doc, transactions)
+
+        changed = {
+            key: {"before": before[key], "after": after[key]}
+            for key in ["date", "description", "amount", "type", "balance"]
+            if before[key] != after[key]
+        }
+        add_audit(db, doc.id, "edit_txn", {"transaction_id": txn.id, "changes": changed, "reconciliation_passed": recon["passed"]})
+
+        db.commit()
+        db.refresh(txn)
+        return serialize_transaction(txn)
+    finally:
+        db.close()
+
+
+@app.post("/documents/{doc_id}/approve")
+def approve_document(doc_id: int):
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter_by(id=doc_id).first()
+        if not doc:
+            raise HTTPException(404, "Document not found")
+
+        previous_status = doc.status
+        doc.status = "approved"
+        review_items = db.query(ReviewItem).filter_by(document_id=doc.id, status="open").all()
+        for item in review_items:
+            item.status = "closed"
+
+        add_audit(db, doc.id, "approve", {"previous_status": previous_status, "closed_review_items": [item.id for item in review_items]})
+        db.commit()
+        db.refresh(doc)
+        return serialize_document(doc)
+    finally:
+        db.close()
+
+
+@app.post("/documents/{doc_id}/reject")
+def reject_document(doc_id: int, payload: RejectRequest | None = None):
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter_by(id=doc_id).first()
+        if not doc:
+            raise HTTPException(404, "Document not found")
+
+        previous_status = doc.status
+        doc.status = "rejected"
+        reason = payload.reason if payload and payload.reason else "Rejected by reviewer"
+        db.add(ReviewItem(document_id=doc.id, reason=reason, status="closed"))
+
+        add_audit(db, doc.id, "reject", {"previous_status": previous_status, "reason": reason})
+        db.commit()
+        db.refresh(doc)
+        return serialize_document(doc)
     finally:
         db.close()
 

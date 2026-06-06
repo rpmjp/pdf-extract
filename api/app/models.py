@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from sqlalchemy import String, DateTime, ForeignKey, Numeric, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -43,6 +44,19 @@ class ReviewItem(Base):
     document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
     reason: Mapped[str] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(20), default="open")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
+    action: Mapped[str] = mapped_column(String(32))
+    details: Mapped[dict] = mapped_column(JSONB)
+    actor: Mapped[str] = mapped_column(String(80), default="reviewer")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

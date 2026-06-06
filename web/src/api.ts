@@ -4,7 +4,7 @@ const baseURL = import.meta.env.VITE_API_URL || "http://localhost:8003";
 
 export const api = axios.create({ baseURL });
 
-export type DocStatus = "uploaded" | "extracted:digital" | "extracted:scanned" | "verified" | "needs_review";
+export type DocStatus = "uploaded" | "extracted:digital" | "extracted:scanned" | "verified" | "needs_review" | "approved" | "rejected";
 
 export interface Document {
   id: number;
@@ -37,6 +37,14 @@ export interface Extraction {
   transactions: Transaction[];
 }
 
+export interface TransactionUpdate {
+  date: string;
+  description: string;
+  amount: number;
+  type: "deposit" | "withdrawal";
+  balance: number | null;
+}
+
 export interface ParseResponse {
   id: number;
   status: DocStatus;
@@ -67,4 +75,14 @@ export interface DocumentDetail extends Document {
   reconciliation: ParseResponse["reconciliation"];
   transactions: Transaction[];
   review_items: ReviewItem[];
+  audit_log: AuditEntry[];
+}
+
+export interface AuditEntry {
+  id: number;
+  document_id: number;
+  action: "edit_txn" | "approve" | "reject" | string;
+  details: Record<string, unknown>;
+  actor: string;
+  created_at: string;
 }

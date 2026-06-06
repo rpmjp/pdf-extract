@@ -1,15 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { Link, useLocation, useParams } from "react-router-dom";
 import AccountCard from "../components/AccountCard";
+import AuditLog from "../components/AuditLog";
+import EditableTransactionsTable from "../components/EditableTransactionsTable";
 import PdfViewer from "../components/PdfViewer";
 import ReconciliationPanel from "../components/ReconciliationPanel";
+import ReviewControls from "../components/ReviewControls";
 import TransactionsTable from "../components/TransactionsTable";
 import { api, type DocumentDetail } from "../api";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     verified: "bg-emerald-100 text-emerald-700",
+    approved: "bg-emerald-100 text-emerald-700",
     needs_review: "bg-amber-100 text-amber-700",
+    rejected: "bg-rose-100 text-rose-700",
     uploaded: "bg-slate-100 text-slate-700",
   };
   const cls = styles[status] || "bg-slate-100 text-slate-700";
@@ -18,6 +23,9 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function DocumentPage() {
   const { id } = useParams();
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const isEditing = location.pathname.endsWith("/review") || searchParams.get("edit") === "1";
   const { data, isLoading, error } = useQuery({
     queryKey: ["document", id],
     queryFn: async () => (await api.get<DocumentDetail>(`/documents/${id}`)).data,
@@ -41,7 +49,18 @@ export default function DocumentPage() {
             <h1 className="text-2xl font-semibold text-slate-900">{data.filename}</h1>
             <p className="mt-1 text-sm text-slate-500">Document #{data.id}</p>
           </div>
-          <StatusBadge status={data.status} />
+          <div className="flex items-center gap-3">
+            {isEditing ? (
+              <Link to={`/documents/${data.id}`} className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+                View
+              </Link>
+            ) : (
+              <Link to={`/documents/${data.id}/review`} className="rounded bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700">
+                Edit
+              </Link>
+            )}
+            <StatusBadge status={data.status} />
+          </div>
         </div>
       </div>
 
@@ -63,7 +82,18 @@ export default function DocumentPage() {
             </section>
           )}
 
-          <TransactionsTable transactions={data.transactions} />
+          {isEditing ? (
+            <>
+              <EditableTransactionsTable documentId={data.id} transactions={data.transactions} />
+              <ReviewControls documentId={data.id} />
+              <AuditLog entries={data.audit_log} />
+            </>
+          ) : (
+            <>
+              <TransactionsTable transactions={data.transactions} />
+              <AuditLog entries={data.audit_log} />
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -20,6 +20,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/documents/:id" element={<DocumentPage />} />
+          <Route path="/documents/:id/review" element={<DocumentPage />} />
         </Routes>
       </main>
     </div>
