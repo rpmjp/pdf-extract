@@ -9,7 +9,7 @@ from .models import Document, Transaction, ReviewItem
 from .storage import ensure_bucket, put_object, get_object
 from .extract import classify_and_extract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
-from .reconcile import reconcile
+from .reconcile import reconcile, correct_signs_from_balances
 
 
 app = FastAPI(title="PDF Extract API")
@@ -105,7 +105,9 @@ def parse_document(doc_id: int):
         else:
             images = render_pages_to_images(pdf_bytes)
             result = extract_statement_from_images(images)
+        corrections = correct_signs_from_balances(result)
         recon = reconcile(result)
+        recon["sign_corrections"] = corrections
         doc.status = "verified" if recon["passed"] else "needs_review"
 
         # Clear any prior rows for this doc (re-parse is idempotent)

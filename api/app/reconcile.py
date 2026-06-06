@@ -57,3 +57,22 @@ def reconcile(data: StatementExtraction) -> dict:
         "withdrawals_total": round(withdrawals, 2),
         "checks": checks,
     }
+
+def correct_signs_from_balances(data: StatementExtraction) -> int:
+    """If consecutive balances are present, the direction of change is
+    ground truth. Flip 'type' for any row whose stated type contradicts it.
+    Returns the number of corrections made."""
+    corrections = 0
+    prev = data.opening_balance
+    for t in data.transactions:
+        if t.balance is not None and prev is not None:
+            delta = round(t.balance - prev, 2)
+            if delta > 0 and t.type != "deposit":
+                t.type = "deposit"
+                corrections += 1
+            elif delta < 0 and t.type != "withdrawal":
+                t.type = "withdrawal"
+                corrections += 1
+        if t.balance is not None:
+            prev = t.balance
+    return corrections
