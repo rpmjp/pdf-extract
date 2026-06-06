@@ -1,0 +1,59 @@
+from .schemas import StatementExtraction
+
+CENTS = 0.01  # tolerance for float rounding
+
+
+def reconcile(data: StatementExtraction) -> dict:
+    """Verify the extracted statement is internally consistent.
+    Returns checks + an overall pass/fail used for confidence routing."""
+    checks = []
+
+    deposits = sum(t.amount for t in data.transactions if t.type == "deposit")
+    withdrawals = sum(t.amount for t in data.transactions if t.type == "withdrawal")
+
+    # Check 1: statement-level balance equation
+    if data.opening_balance is not None and data.closing_balance is not None:
+        expected = data.opening_balance + deposits - withdrawals
+        ok = abs(expected - data.closing_balance) < CENTS
+        checks.append({
+            "name": "statement_balance",
+            "passed": ok,
+            "detail": f"opening {data.opening_balance} + deposits {deposits:.2f} "
+                      f"- withdrawals {withdrawals:.2f} = {expected:.2f}, "
+                      f"stated closing {data.closing_balance}",
+        })
+    else:
+        checks.append({
+            "name": "statement_balance",
+            "passed": False,
+            "detail": "missing opening or closing balance",
+        })
+
+    # Check 2: row-level running balance continuity
+    prev = data.opening_balance
+    row_ok = True
+    for i, t in enumerate(data.transactions):
+        if t.balance is None or prev is None:
+            row_ok = False
+            break
+        delta = t.amount if t.type == "deposit" else -t.amount
+        if abs((prev + delta) - t.balance) >= CENTS:
+            row_ok = False
+            checks.append({
+                "name": "row_balance",
+                "passed": False,
+                "detail": f"row {i+1} ({t.description}): {prev} {'+' if delta>=0 else '-'} "
+                          f"{abs(delta):.2f} != {t.balance}",
+            })
+            break
+        prev = t.balance
+    if row_ok:
+        checks.append({"name": "row_balance", "passed": True, "detail": "all rows continuous"})
+
+    passed = all(c["passed"] for c in checks)
+    return {
+        "passed": passed,
+        "deposits_total": round(deposits, 2),
+        "withdrawals_total": round(withdrawals, 2),
+        "checks": checks,
+    }

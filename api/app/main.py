@@ -9,6 +9,7 @@ from .models import Document
 from .storage import ensure_bucket, put_object, get_object
 from .extract import classify_and_extract
 from .llm import extract_statement
+from .reconcile import reconcile
 
 app = FastAPI(title="PDF Extract API")
 engine = create_engine(settings.database_url, pool_pre_ping=True)
@@ -99,6 +100,14 @@ def parse_document(doc_id: int):
         extracted = classify_and_extract(pdf_bytes)
         text = "\n\n".join(p["text"] for p in extracted["pages"])
         result = extract_statement(text)
-        return result.model_dump()
+        recon = reconcile(result)
+        doc.status = "verified" if recon["passed"] else "needs_review"
+        db.commit()
+        return {
+            "id": doc.id,
+            "status": doc.status,
+            "reconciliation": recon,
+            "extraction": result.model_dump(),
+        }
     finally:
         db.close()
