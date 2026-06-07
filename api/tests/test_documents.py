@@ -42,6 +42,30 @@ def test_upload_rejects_non_pdf(client, auth_headers):
     assert response.json()["detail"] == "Only PDF files accepted"
 
 
+def test_upload_rejects_pdf_extension_with_invalid_content(client, auth_headers):
+    response = client.post(
+        "/documents",
+        headers=auth_headers,
+        files={"file": ("pytest-fake.pdf", b"not a pdf", "application/pdf")},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Only valid PDF files accepted"
+
+
+def test_upload_rejects_oversized_pdf(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(main.settings, "max_pdf_bytes", 8)
+
+    response = client.post(
+        "/documents",
+        headers=auth_headers,
+        files={"file": ("pytest-huge.pdf", b"%PDF-1.4\npayload", "application/pdf")},
+    )
+
+    assert response.status_code == 413
+    assert "too large" in response.json()["detail"]
+
+
 def test_dashboard_excludes_rejected_documents(client, db, auth_headers):
     visible = create_document(db, filename="pytest-visible.pdf", status="verified")
     create_document(db, filename="pytest-rejected.pdf", status="rejected")
@@ -116,6 +140,9 @@ def test_bulk_reparse_success_and_partial_failure(client, db, auth_headers, monk
     assert body["failed"][0]["id"] == busy.id
     assert "already processing" in body["failed"][0]["error"]
     assert db.query(ParseJob).filter_by(document_id=ok.id, status="queued").count() == 1
+    audit = db.query(AuditLog).filter_by(document_id=ok.id, action="parse_queued").one()
+    assert audit.actor == "pytest-reviewer"
+    assert audit.details["source"] == "bulk"
     assert len(queued_calls) == 1
 
 
@@ -161,6 +188,51 @@ def test_bulk_reject_success_and_partial_failure(client, db, auth_headers):
     assert db.query(ReviewItem).filter_by(document_id=ok.id, status="closed").first().reason == "Duplicate source"
 
 
+def test_filter_needs_review_returns_only_matching_docs(client, db, auth_headers):
+    nr = create_document(db, filename="pytest-filt-nr.pdf", status="needs_review")
+    failed = create_document(db, filename="pytest-filt-failed.pdf", status="failed")
+    approved = create_document(db, filename="pytest-filt-approved.pdf", status="approved")
+
+    response = client.get("/documents?filter=needs_review&per_page=100", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    ids = {doc["id"] for doc in body["items"]}
+    assert nr.id in ids
+    assert failed.id in ids
+    assert approved.id not in ids
+    assert all(doc["status"] in ("needs_review", "failed") for doc in body["items"] if doc["id"] in {nr.id, failed.id})
+
+
+def test_filter_processing_returns_only_matching_docs(client, db, auth_headers):
+    queued = create_document(db, filename="pytest-filt-queued.pdf", status="queued")
+    parsing = create_document(db, filename="pytest-filt-parsing.pdf", status="parsing")
+    verified = create_document(db, filename="pytest-filt-verified.pdf", status="verified")
+
+    response = client.get("/documents?filter=processing&per_page=100", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    ids = {doc["id"] for doc in body["items"]}
+    assert queued.id in ids
+    assert parsing.id in ids
+    assert verified.id not in ids
+
+
+def test_no_filter_returns_all_non_rejected_docs(client, db, auth_headers):
+    visible = create_document(db, filename="pytest-nofilt-visible.pdf", status="verified")
+    rejected = create_document(db, filename="pytest-nofilt-rejected.pdf", status="rejected")
+
+    response = client.get("/documents?per_page=100", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    ids = {doc["id"] for doc in body["items"]}
+    assert visible.id in ids
+    assert rejected.id not in ids
+    assert all(doc["status"] != "rejected" for doc in body["items"])
+
+
 def test_bulk_actions_enforce_roles(client, db):
     doc = create_document(db, filename="pytest-bulk-role.pdf", status="verified")
     uploader_token = create_access_token(AuthUser(username="pytest-uploader", roles=["uploader"]))
@@ -179,3 +251,16 @@ def test_bulk_actions_enforce_roles(client, db):
 
     assert approve.status_code == 403
     assert reparse.status_code == 403
+
+
+def test_get_document_file_records_view_audit(client, db, auth_headers, monkeypatch):
+    doc = create_document(db, filename="pytest-view-file.pdf", status="verified")
+    monkeypatch.setattr(main, "get_object", lambda key: PDF_BYTES)
+
+    response = client.get(f"/documents/{doc.id}/file", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    audit = db.query(AuditLog).filter_by(document_id=doc.id, action="view_file").one()
+    assert audit.actor == "pytest-reviewer"
+    assert audit.details["filename"] == "pytest-view-file.pdf"

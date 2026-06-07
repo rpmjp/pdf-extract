@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { api, getAuthToken, setAuthToken, type AuthUser } from "./api";
 import Dashboard from "./pages/Dashboard";
 import AdminFailuresPage from "./pages/AdminFailuresPage";
+import ConfidenceInsightsPage from "./pages/ConfidenceInsightsPage";
 import DocumentPage from "./pages/DocumentPage";
 import LoginPage from "./pages/LoginPage";
 import UploadPage from "./pages/UploadPage";
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/review" element={<Dashboard mode="review" />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/admin/failures" element={<AdminFailuresPage />} />
+          <Route path="/insights/confidence" element={<ConfidenceInsightsPage />} />
           <Route path="/documents/:id" element={<DocumentPage />} />
           <Route path="/documents/:id/review" element={<DocumentPage />} />
         </Routes>

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { api, type BulkDocumentsResponse, type Document, type PaginatedDocumentsResponse } from "../api";
+import { api, type BulkDocumentsResponse, type Document, type DocumentStats, type PaginatedDocumentsResponse } from "../api";
 import ConfidenceMeter, { formatConfidence } from "../components/ConfidenceMeter";
 import StatusBadge, { PriorityBadge } from "../components/StatusBadge";
 
@@ -21,18 +21,24 @@ function formatDate(value?: string) {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
-function averageConfidence(documents: Document[]) {
-  const values = documents.map((doc) => doc.confidence_score).filter((value): value is number => typeof value === "number");
-  if (!values.length) return null;
-  return values.reduce((total, value) => total + value, 0) / values.length;
-}
-
 function documentHref(doc: Document) {
   return doc.status === "needs_review" || doc.status === "failed" ? `/documents/${doc.id}/review` : `/documents/${doc.id}`;
 }
 
 function isInteractiveTarget(target: EventTarget | null) {
   return target instanceof HTMLElement && Boolean(target.closest("button,a,input,select,textarea"));
+}
+
+function normalizeDocumentsResponse(data: PaginatedDocumentsResponse | Document[]): PaginatedDocumentsResponse {
+  if (Array.isArray(data)) {
+    return {
+      items: data,
+      total: data.length,
+      page: 1,
+      per_page: data.length || 25,
+    };
+  }
+  return data;
 }
 
 function StatCard({
@@ -155,7 +161,19 @@ export default function Dashboard({ mode = "documents" }: { mode?: "documents" |
   const queryKey = [isReview ? "review-queue" : "documents", params];
   const { data, isLoading, error } = useQuery({
     queryKey,
-    queryFn: async () => (await api.get<PaginatedDocumentsResponse>(isReview ? "/review-queue" : "/documents", { params })).data,
+    queryFn: async () => {
+      const response = await api.get<PaginatedDocumentsResponse | Document[]>(isReview ? "/review-queue" : "/documents", { params });
+      return normalizeDocumentsResponse(response.data);
+    },
+    refetchInterval: 4000,
+  });
+
+  const { data: stats } = useQuery({
+    queryKey: ["document-stats"],
+    queryFn: async () => {
+      const response = await api.get<DocumentStats>("/documents/stats");
+      return response.data;
+    },
     refetchInterval: 4000,
   });
 
@@ -186,9 +204,8 @@ export default function Dashboard({ mode = "documents" }: { mode?: "documents" |
   const currentPage = data?.page || 1;
   const currentPerPage = data?.per_page || 25;
   const totalPages = Math.max(1, Math.ceil(total / currentPerPage));
-  const needsReview = documents.filter((doc) => doc.status === "needs_review" || doc.status === "failed").length;
-  const inFlight = documents.filter((doc) => doc.status === "queued" || doc.status === "parsing").length;
-  const avgConfidence = averageConfidence(documents);
+  const needsReview = stats?.needs_review ?? 0;
+  const inFlight = stats?.processing ?? 0;
   const selectedDocuments = documents.filter((doc) => selectedIds.includes(doc.id));
   const allVisibleSelected = documents.length > 0 && documents.every((doc) => selectedIds.includes(doc.id));
   const canReparse = selectedDocuments.length > 0 && selectedDocuments.every((doc) => doc.status !== "queued" && doc.status !== "parsing");
@@ -236,7 +253,7 @@ export default function Dashboard({ mode = "documents" }: { mode?: "documents" |
       </div>
 
       <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total" value={total} active={!filter} onClick={() => updateParams({ filter: null, q: null, sort: null, order: null })} />
+        <StatCard label="Total" value={stats?.total ?? total} active={!filter} onClick={() => updateParams({ filter: null, q: null, sort: null, order: null })} />
         <StatCard
           label="Needs review"
           value={needsReview}
@@ -252,7 +269,11 @@ export default function Dashboard({ mode = "documents" }: { mode?: "documents" |
           disabled={inFlight === 0}
           onClick={() => updateParams({ filter: "processing" })}
         />
-        <StatCard label="Avg confidence" value={formatConfidence(avgConfidence)} />
+        <StatCard
+          label="Avg confidence"
+          value={formatConfidence(stats?.avg_confidence ?? null)}
+          onClick={() => navigate("/insights/confidence")}
+        />
       </div>
 
       <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

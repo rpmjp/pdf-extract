@@ -47,6 +47,8 @@ def verify_password(password: str, password_hash: str) -> bool:
 
 
 def seed_dev_users():
+    if not settings.seed_dev_users:
+        return
     if get_db_session is None:
         raise RuntimeError("Auth database session factory is not configured")
 
@@ -107,7 +109,8 @@ def get_current_user(
     token: Annotated[str | None, Query()] = None,
 ) -> AuthUser:
     bearer = credentials.credentials if credentials else None
-    return decode_access_token(bearer or token or "")
+    query_token = token if settings.allow_query_token_auth else None
+    return decode_access_token(bearer or query_token or "")
 
 
 def require_roles(*allowed_roles: str):

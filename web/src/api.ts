@@ -198,3 +198,71 @@ export interface FailuresResponse {
   since: string;
   categories: FailureCategorySummary[];
 }
+
+export interface DocumentStats {
+  total: number;
+  needs_review: number;
+  processing: number;
+  avg_confidence: number | null;
+}
+
+export interface KpiMetric {
+  current: number | null;
+  previous: number | null;
+  delta: number | null;
+}
+
+export interface InsightsAlert {
+  type: string;
+  message: string;
+  link: string;
+  severity: "warning" | "error";
+}
+
+export interface ScatterPoint {
+  document_id: number;
+  filename: string;
+  date: string;
+  confidence: number;
+  status: string;
+}
+
+export interface BySourceRow {
+  source: string;
+  count: number;
+  mean_confidence: number | null;
+  pass_rate: number | null;
+  mean_review_hours: number | null;
+}
+
+export interface LowestDoc {
+  id: number;
+  filename: string;
+  status: string;
+  confidence_score: number | null;
+  created_at: string;
+  account_holder: string | null;
+  account_number: string | null;
+  statement_period: string | null;
+  priority: "P1" | "P2" | "P3" | null;
+  time_in_status_hours: number;
+  last_modified_by: string | null;
+}
+
+export interface InsightsOverview {
+  kpis: {
+    pass_rate: KpiMetric;
+    mean_confidence: KpiMetric;
+    median_review_time_hours: KpiMetric;
+    auto_approval_rate: KpiMetric;
+  };
+  alerts: InsightsAlert[];
+  volume_vs_confidence: ScatterPoint[];
+  pass_rate_trend: { date: string; rate: number | null; count: number }[];
+  failure_breakdown: { category: string; count: number; link: string }[];
+  by_source: BySourceRow[];
+  queue_depth: { date: string; depth: number }[];
+  parse_latency: { date: string; p50: number | null; p95: number | null; p99: number | null }[];
+  failure_rate: { date: string; total: number; failed: number; rate: number }[];
+  lowest: LowestDoc[];
+}

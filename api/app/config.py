@@ -4,6 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    app_env: str = "development"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+
     postgres_user: str = "pdfextract"
     postgres_password: str = "devpassword"
     postgres_db: str = "pdfextract_dev"
@@ -23,6 +26,9 @@ class Settings(BaseSettings):
     llm_model: str = "qwen2.5vl:7b"
     jwt_secret: str = "dev-secret-change-me"
     access_token_minutes: int = 480
+    seed_dev_users: bool = True
+    allow_query_token_auth: bool = True
+    max_pdf_bytes: int = 25 * 1024 * 1024
     ocr_fallback_enabled: bool = False
     ensemble_confidence_enabled: bool = True
     few_shot_enabled: bool = False
@@ -32,6 +38,31 @@ class Settings(BaseSettings):
     @property
     def minio_endpoint(self) -> str:
         return f"http://{self.minio_host}:{self.minio_port}"
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in {"prod", "production"}
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
+
+    def validate_production_safety(self):
+        if not self.is_production:
+            return
+        problems = []
+        if self.jwt_secret == "dev-secret-change-me" or len(self.jwt_secret) < 32:
+            problems.append("JWT_SECRET must be set to a strong production secret")
+        if self.seed_dev_users:
+            problems.append("SEED_DEV_USERS must be false in production")
+        if self.allow_query_token_auth:
+            problems.append("ALLOW_QUERY_TOKEN_AUTH must be false in production")
+        if self.postgres_password == "devpassword":
+            problems.append("POSTGRES_PASSWORD must not use the development default in production")
+        if self.minio_access_key == "minioadmin" or self.minio_secret_key == "minioadmin":
+            problems.append("MinIO credentials must not use development defaults in production")
+        if problems:
+            raise RuntimeError("; ".join(problems))
 
     @property
     def database_url(self) -> str:
