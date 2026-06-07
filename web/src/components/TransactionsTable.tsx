@@ -1,4 +1,5 @@
 import type { Transaction } from "../api";
+import ConfidenceMeter from "./ConfidenceMeter";
 
 function formatAmount(transaction: Transaction) {
   const formatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(transaction.amount);
@@ -28,6 +29,7 @@ export default function TransactionsTable({ transactions }: { transactions: Tran
                 <th className="px-4 py-3 text-left">Type</th>
                 <th className="px-4 py-3 text-right">Amount</th>
                 <th className="px-4 py-3 text-right">Balance</th>
+                <th className="px-4 py-3 text-right">Confidence</th>
               </tr>
             </thead>
             <tbody>
@@ -51,6 +53,9 @@ export default function TransactionsTable({ transactions }: { transactions: Tran
                     </td>
                     <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums text-slate-500">
                       {formatBalance(transaction.balance)}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right">
+                      <ConfidenceMeter value={transaction.confidence} compact />
                     </td>
                   </tr>
                 );

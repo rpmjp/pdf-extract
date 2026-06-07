@@ -20,7 +20,7 @@ os.environ.setdefault("MINIO_PORT", "9000")
 
 from app import main  # noqa: E402
 from app.auth import AuthUser, create_access_token  # noqa: E402
-from app.models import AuditLog, Document, DocumentVersion, ReviewItem, Transaction  # noqa: E402
+from app.models import AuditLog, CorrectionExample, Document, DocumentVersion, EvalRun, EvalSetMember, ReviewItem, Transaction  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +54,8 @@ def auth_headers():
 
 def cleanup_pytest_rows():
     with main.engine.begin() as conn:
-        for table in ("audit_log", "document_versions", "parse_jobs", "transactions", "review_items"):
+        conn.execute(text("DELETE FROM eval_runs WHERE eval_set_version LIKE 'pytest-%'"))
+        for table in ("eval_set_members", "correction_examples", "audit_log", "document_versions", "parse_jobs", "transactions", "review_items"):
             conn.execute(
                 text(
                     f"""
@@ -123,8 +124,11 @@ def add_transactions(db, doc, *, balanced=True):
 
 __all__ = [
     "AuditLog",
+    "CorrectionExample",
     "Document",
     "DocumentVersion",
+    "EvalRun",
+    "EvalSetMember",
     "ReviewItem",
     "Transaction",
     "add_statement_fields",

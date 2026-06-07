@@ -57,6 +57,8 @@ export interface Document {
   opening_balance?: number | null;
   closing_balance?: number | null;
   confidence_score?: number | null;
+  review_item_count?: number;
+  first_review_reason?: string | null;
 }
 
 export interface Transaction {
@@ -137,6 +139,19 @@ export interface DocumentDetail extends Document {
   transactions: Transaction[];
   review_items: ReviewItem[];
   audit_log: AuditEntry[];
+  versions: DocumentVersion[];
+}
+
+export interface DocumentVersion {
+  id: number;
+  document_id: number;
+  source: string;
+  actor: string;
+  data: {
+    document?: Document;
+    transactions?: Transaction[];
+  };
+  created_at: string;
 }
 
 export interface AuditEntry {
@@ -146,4 +161,27 @@ export interface AuditEntry {
   details: Record<string, unknown>;
   actor: string;
   created_at: string;
+}
+
+export interface FailureDiff {
+  path: string;
+  transaction_index: number | null;
+  before: unknown;
+  after: unknown;
+}
+
+export interface FailureCategorySummary {
+  category: string;
+  count: number;
+  samples: {
+    document_id: number;
+    filename: string;
+    diffs: FailureDiff[];
+  }[];
+  trend: { week: string; count: number }[];
+}
+
+export interface FailuresResponse {
+  since: string;
+  categories: FailureCategorySummary[];
 }

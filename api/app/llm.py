@@ -1,9 +1,11 @@
 import json
 import urllib.request
+from .learning.fewshot import build_few_shot_messages
 from .config import settings
 from .schemas import StatementExtraction
 
 OLLAMA_URL = "http://host.docker.internal:11434/api/chat"
+PROMPT_VERSION = "prompt-v1.0"
 
 SYSTEM_PROMPT = """You extract structured data from bank statements into JSON.
 
@@ -66,40 +68,40 @@ def _chat(payload) -> StatementExtraction:
     return StatementExtraction.model_validate_json(content)
 
 
-def extract_statement(text: str, variant: str = "primary") -> StatementExtraction:
+def extract_statement(text: str, variant: str = "primary", few_shot_examples: list[dict] | None = None) -> StatementExtraction:
     prompt = ENSEMBLE_SYSTEM_PROMPT if variant == "ensemble" else SYSTEM_PROMPT
     user_text = (
         "Independently extract this bank statement for cross-checking:\n\n"
         if variant == "ensemble"
         else "Extract this bank statement:\n\n"
     )
+    messages = [{"role": "system", "content": prompt}]
+    if few_shot_examples:
+        messages.extend(build_few_shot_messages(few_shot_examples, token_budget=settings.few_shot_token_budget))
+    messages.append({"role": "user", "content": f"{user_text}{text}"})
     return _chat({
         "model": settings.llm_model,
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": f"{user_text}{text}"},
-        ],
+        "messages": messages,
         "stream": False,
         "format": StatementExtraction.model_json_schema(),
         "options": {"temperature": 0},
     })
 
 
-def extract_statement_from_images(images_b64: list[str], variant: str = "primary") -> StatementExtraction:
+def extract_statement_from_images(images_b64: list[str], variant: str = "primary", few_shot_examples: list[dict] | None = None) -> StatementExtraction:
     prompt = ENSEMBLE_SYSTEM_PROMPT if variant == "ensemble" else SYSTEM_PROMPT
     user_text = (
         "Independently extract this bank statement from the page image(s) for cross-checking."
         if variant == "ensemble"
         else "Extract this bank statement from the page image(s)."
     )
+    messages = [{"role": "system", "content": prompt}]
+    if few_shot_examples:
+        messages.extend(build_few_shot_messages(few_shot_examples, token_budget=settings.few_shot_token_budget))
+    messages.append({"role": "user", "content": user_text, "images": images_b64})
     return _chat({
         "model": settings.llm_model,
-        "messages": [
-            {"role": "system", "content": prompt},
-            {"role": "user",
-             "content": user_text,
-             "images": images_b64},
-        ],
+        "messages": messages,
         "stream": False,
         "format": StatementExtraction.model_json_schema(),
         "options": {"temperature": 0},

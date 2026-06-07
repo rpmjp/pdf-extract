@@ -1,23 +1,42 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, type Document } from "../api";
+import ConfidenceMeter, { formatConfidence } from "../components/ConfidenceMeter";
+import StatusBadge from "../components/StatusBadge";
 
-function StatusBadge({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    verified: "bg-emerald-100 text-emerald-700",
-    approved: "bg-emerald-100 text-emerald-700",
-    needs_review: "bg-amber-100 text-amber-700",
-    queued: "bg-sky-100 text-sky-700",
-    parsing: "bg-sky-100 text-sky-700",
-    failed: "bg-rose-100 text-rose-700",
-    uploaded: "bg-slate-100 text-slate-700",
-  };
-  const cls = styles[status] || "bg-slate-100 text-slate-700";
-  return <span className={`px-2 py-0.5 rounded text-xs font-medium ${cls}`}>{status}</span>;
+function formatDate(value?: string) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(new Date(value));
 }
 
-function formatConfidence(value?: number | null) {
-  return typeof value === "number" ? `${Math.round(value * 100)}%` : "—";
+function averageConfidence(documents: Document[]) {
+  const values = documents.map((doc) => doc.confidence_score).filter((value): value is number => typeof value === "number");
+  if (!values.length) return null;
+  return values.reduce((total, value) => total + value, 0) / values.length;
+}
+
+function StatCard({ label, value, tone = "slate" }: { label: string; value: string | number; tone?: "slate" | "amber" | "sky" | "rose" }) {
+  const styles = {
+    slate: "border-slate-200 bg-white text-slate-900",
+    amber: "border-amber-200 bg-amber-50 text-amber-900",
+    sky: "border-sky-200 bg-sky-50 text-sky-900",
+    rose: "border-rose-200 bg-rose-50 text-rose-900",
+  };
+  return (
+    <div className={`rounded-lg border p-4 ${styles[tone]}`}>
+      <p className="text-xs font-medium uppercase tracking-wide opacity-70">{label}</p>
+      <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function priorityLabel(doc: Document) {
+  if (doc.first_review_reason) return doc.first_review_reason;
+  if (doc.status === "failed") return "Worker failed";
+  if (doc.status === "queued" || doc.status === "parsing") return "Processing";
+  if (doc.status === "needs_review") return doc.review_item_count ? `${doc.review_item_count} review item${doc.review_item_count === 1 ? "" : "s"}` : "Review required";
+  if (typeof doc.confidence_score === "number" && doc.confidence_score < 0.75) return "Low confidence";
+  return doc.account_holder || "Ready";
 }
 
 export default function Dashboard({ mode = "documents" }: { mode?: "documents" | "review" }) {
@@ -32,35 +51,68 @@ export default function Dashboard({ mode = "documents" }: { mode?: "documents" |
   if (isLoading) return <p className="text-slate-500">Loading…</p>;
   if (error) return <p className="text-rose-600">Failed to load documents.</p>;
 
+  const documents = data || [];
+  const needsReview = documents.filter((doc) => doc.status === "needs_review").length;
+  const inFlight = documents.filter((doc) => doc.status === "queued" || doc.status === "parsing").length;
+  const failed = documents.filter((doc) => doc.status === "failed").length;
+  const avgConfidence = averageConfidence(documents);
+
   return (
     <div>
-      <h1 className="text-2xl font-semibold mb-6">{isReview ? "Review queue" : "Documents"}</h1>
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+      <div className="mb-6 flex items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold text-slate-900">{isReview ? "Review queue" : "Documents"}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {isReview ? "Prioritized statements that need human attention." : "Operational view of uploaded statements and parse progress."}
+          </p>
+        </div>
+      </div>
+
+      <div className="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Total" value={documents.length} />
+        <StatCard label="Needs review" value={needsReview} tone={needsReview ? "amber" : "slate"} />
+        <StatCard label="Processing" value={inFlight} tone={inFlight ? "sky" : "slate"} />
+        <StatCard label={failed ? "Failed" : "Avg confidence"} value={failed || formatConfidence(avgConfidence)} tone={failed ? "rose" : "slate"} />
+      </div>
+
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600">
             <tr>
-              <th className="text-left px-4 py-3">ID</th>
-              <th className="text-left px-4 py-3">Filename</th>
-              <th className="text-left px-4 py-3">Status</th>
-              <th className="text-right px-4 py-3">Confidence</th>
+              <th className="px-4 py-3 text-left">Document</th>
+              <th className="px-4 py-3 text-left">Account</th>
+              <th className="px-4 py-3 text-left">Priority</th>
+              <th className="px-4 py-3 text-left">Status</th>
+              <th className="px-4 py-3 text-right">Confidence</th>
             </tr>
           </thead>
           <tbody>
-            {data?.map((d) => (
+            {documents.map((d) => (
               <tr
                 key={d.id}
                 onClick={() => navigate(isReview ? `/documents/${d.id}/review` : `/documents/${d.id}`)}
                 className="cursor-pointer border-t border-slate-100 hover:bg-slate-50"
               >
-                <td className="px-4 py-3 text-slate-500">#{d.id}</td>
-                <td className="px-4 py-3">{d.filename}</td>
+                <td className="px-4 py-3">
+                  <p className="font-medium text-slate-900">{d.filename}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">#{d.id} · {formatDate(d.created_at)}</p>
+                </td>
+                <td className="px-4 py-3">
+                  <p className="font-medium text-slate-800">{d.account_holder || "—"}</p>
+                  <p className="mt-0.5 text-xs text-slate-500">{d.account_number || d.statement_period || "No account details yet"}</p>
+                </td>
+                <td className="max-w-sm px-4 py-3 text-slate-600">
+                  <p className="line-clamp-2">{priorityLabel(d)}</p>
+                </td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
-                <td className="px-4 py-3 text-right tabular-nums text-slate-600">{formatConfidence(d.confidence_score)}</td>
+                <td className="px-4 py-3 text-right">
+                  <ConfidenceMeter value={d.confidence_score} compact />
+                </td>
               </tr>
             ))}
-            {data?.length === 0 && (
+            {documents.length === 0 && (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
                   {isReview ? "No documents need review." : "No documents yet."}
                 </td>
               </tr>

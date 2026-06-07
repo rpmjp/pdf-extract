@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     access_token_minutes: int = 480
     ocr_fallback_enabled: bool = False
     ensemble_confidence_enabled: bool = True
+    few_shot_enabled: bool = False
+    few_shot_k: int = 3
+    few_shot_token_budget: int = 12000
 
     @property
     def minio_endpoint(self) -> str:

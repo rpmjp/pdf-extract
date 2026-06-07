@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, getAuthToken, setAuthToken, type AuthUser } from "./api";
 import Dashboard from "./pages/Dashboard";
+import AdminFailuresPage from "./pages/AdminFailuresPage";
 import DocumentPage from "./pages/DocumentPage";
 import LoginPage from "./pages/LoginPage";
 import UploadPage from "./pages/UploadPage";
@@ -39,6 +40,7 @@ export default function App() {
             <Link to="/" className="hover:text-slate-900">Documents</Link>
             <Link to="/upload" className="hover:text-slate-900">Upload</Link>
             <Link to="/review" className="hover:text-slate-900">Review</Link>
+            {user.roles.includes("admin") && <Link to="/admin/failures" className="hover:text-slate-900">Failures</Link>}
             <span className="text-slate-400">{user.username}</span>
             <button type="button" onClick={logout} className="font-medium text-slate-700 hover:text-slate-900">
               Log out
@@ -51,6 +53,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/review" element={<Dashboard mode="review" />} />
           <Route path="/upload" element={<UploadPage />} />
+          <Route path="/admin/failures" element={<AdminFailuresPage />} />
           <Route path="/documents/:id" element={<DocumentPage />} />
           <Route path="/documents/:id/review" element={<DocumentPage />} />
         </Routes>

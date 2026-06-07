@@ -7,8 +7,11 @@ from sqlalchemy.orm import sessionmaker
 from .confidence import apply_disagreement_penalty, document_confidence, extraction_disagreement, transaction_confidence
 from .config import settings
 from .extract import classify_and_extract, extract_text_with_tesseract, render_pages_to_images
+from .learning.examples import _infer_bank, _infer_layout
+from .learning.fewshot import retrieve_few_shot
+from .learning.rules import apply_rules
 from .llm import extract_statement, extract_statement_from_images
-from .models import Document, DocumentVersion, ParseJob, ReviewItem, Transaction
+from .models import AuditLog, Document, DocumentVersion, ParseJob, ReviewItem, Transaction
 from .reconcile import correct_signs_from_balances, reconcile
 from .storage import get_object
 
@@ -84,13 +87,59 @@ def parse_document_task(self, doc_id: int):
         extracted = classify_and_extract(pdf_bytes)
         source_for_ensemble = None
         images = None
+        text = ""
+        few_shot_examples = []
         if extracted["kind"] == "digital":
             text = "\n\n".join(p["text"] for p in extracted["pages"])
+            if settings.few_shot_enabled:
+                features = {
+                    "bank": _infer_bank(text, doc),
+                    "layout": _infer_layout(text),
+                    "source": extracted["kind"],
+                    "page_count": len(extracted["pages"]),
+                    "transaction_count": 0,
+                }
+                few_shot_examples = retrieve_few_shot(db, features, k=settings.few_shot_k, exclude_document_id=doc.id)
+                db.add(
+                    AuditLog(
+                        document_id=doc.id,
+                        action="few_shot_retrieval",
+                        actor="worker",
+                        details={
+                            "features": features,
+                            "example_ids": [example["correction_example_id"] for example in few_shot_examples],
+                            "example_document_ids": [example["document_id"] for example in few_shot_examples],
+                        },
+                    )
+                )
+                db.commit()
             source_for_ensemble = text
-            result = extract_statement(text)
+            result = extract_statement(text, few_shot_examples=few_shot_examples)
         else:
             images = render_pages_to_images(pdf_bytes)
-            result = extract_statement_from_images(images)
+            if settings.few_shot_enabled:
+                features = {
+                    "bank": "unknown",
+                    "layout": "mixed",
+                    "source": extracted["kind"],
+                    "page_count": len(extracted["pages"]),
+                    "transaction_count": 0,
+                }
+                few_shot_examples = retrieve_few_shot(db, features, k=settings.few_shot_k, exclude_document_id=doc.id)
+                db.add(
+                    AuditLog(
+                        document_id=doc.id,
+                        action="few_shot_retrieval",
+                        actor="worker",
+                        details={
+                            "features": features,
+                            "example_ids": [example["correction_example_id"] for example in few_shot_examples],
+                            "example_document_ids": [example["document_id"] for example in few_shot_examples],
+                        },
+                    )
+                )
+                db.commit()
+            result = extract_statement_from_images(images, few_shot_examples=few_shot_examples)
 
         corrections = correct_signs_from_balances(result)
         recon = reconcile(result)
@@ -134,6 +183,13 @@ def parse_document_task(self, doc_id: int):
                     recon = fallback_recon
                     confidence = fallback_confidence
                     source_for_ensemble = fallback_text
+
+        result, rule_corrections, rule_correction_details = apply_rules(result, {"text": source_for_ensemble or ""})
+        corrections = correct_signs_from_balances(result)
+        recon = reconcile(result)
+        recon["sign_corrections"] = corrections
+        recon["rule_corrections"] = rule_corrections
+        confidence = document_confidence(result, document_kind=extracted["kind"], reconciliation_passed=recon["passed"])
 
         if settings.ensemble_confidence_enabled:
             if source_for_ensemble is not None:
@@ -186,6 +242,7 @@ def parse_document_task(self, doc_id: int):
             "reconciliation": recon,
             "confidence_score": confidence,
             "ensemble_disagreement": disagreement,
+            "rule_corrections": rule_correction_details,
             "extraction": result.model_dump(),
         }
         db.add(
@@ -193,7 +250,7 @@ def parse_document_task(self, doc_id: int):
                 document_id=doc.id,
                 source="llm_parse",
                 actor="worker",
-                data=result_payload,
+                data={**result_payload, "source_text": text},
             )
         )
         job.status = "success"

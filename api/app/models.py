@@ -106,3 +106,42 @@ class DocumentVersion(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
+
+
+class CorrectionExample(Base):
+    __tablename__ = "correction_examples"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
+    original_version_id: Mapped[int] = mapped_column(ForeignKey("document_versions.id"))
+    corrected_version_id: Mapped[int] = mapped_column(ForeignKey("document_versions.id"))
+    field_diffs: Mapped[list[dict]] = mapped_column(JSONB)
+    failure_category: Mapped[str] = mapped_column(String(64))
+    pdf_features: Mapped[dict] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class EvalSetMember(Base):
+    __tablename__ = "eval_set_members"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    eval_set_version: Mapped[str] = mapped_column(String(32))
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
+    corrected_version_id: Mapped[int] = mapped_column(ForeignKey("document_versions.id"))
+    locked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class EvalRun(Base):
+    __tablename__ = "eval_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    eval_set_version: Mapped[str] = mapped_column(String(32))
+    prompt_version: Mapped[str] = mapped_column(String(32))
+    ran_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    metrics_json: Mapped[dict] = mapped_column(JSONB)

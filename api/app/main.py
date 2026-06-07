@@ -1,6 +1,9 @@
 import hashlib
+import logging
 import time
 import uuid
+from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 from celery.result import AsyncResult
@@ -15,13 +18,16 @@ import redis
 
 from .auth import AuthUser, LoginRequest, authenticate, configure_auth, create_access_token, get_current_user, require_roles, seed_dev_users
 from .config import settings
-from .models import AuditLog, Document, DocumentVersion, ParseJob, Transaction, ReviewItem
+from .learning.examples import create_correction_example_for_document
+from .models import AuditLog, CorrectionExample, Document, DocumentVersion, ParseJob, Transaction, ReviewItem
 from .storage import ensure_bucket, put_object, get_object
 from .extract import classify_and_extract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
 from .reconcile import reconcile, correct_signs_from_balances
 from .schemas import StatementExtraction, Transaction as TransactionSchema
 from .worker import celery_app, parse_document_task
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="PDF Extract API")
 app.add_middleware(
@@ -75,6 +81,23 @@ class BatchUploadResult(BaseModel):
 ACTIVE_JOB_STATES = {"PENDING", "RECEIVED", "STARTED", "RETRY"}
 RECOVERABLE_DOCUMENT_STATES = {"queued", "parsing"}
 JOB_RECOVERY_LOCK_SECONDS = 30
+
+
+def parse_since(value: str) -> datetime:
+    if value.endswith("d") and value[:-1].isdigit():
+        return datetime.now(timezone.utc) - timedelta(days=int(value[:-1]))
+    if value.endswith("w") and value[:-1].isdigit():
+        return datetime.now(timezone.utc) - timedelta(weeks=int(value[:-1]))
+    try:
+        parsed = datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise HTTPException(400, "since must be like 30d, 8w, or an ISO datetime")
+
+
+def week_key(value: datetime) -> str:
+    year, week, _ = value.isocalendar()
+    return f"{year}-W{week:02d}"
 
 
 def broker_has_pending_job(job_id: str) -> bool:
@@ -419,16 +442,7 @@ def list_documents(user: Annotated[AuthUser, Depends(get_current_user)]):
     db = SessionLocal()
     try:
         docs = db.query(Document).filter(Document.status != "rejected").order_by(Document.id.desc()).all()
-        return [
-            {
-                "id": d.id,
-                "filename": d.filename,
-                "status": d.status,
-                "sha256": d.sha256,
-                "created_at": d.created_at.isoformat(),
-            }
-            for d in docs
-        ]
+        return [serialize_document(d) for d in docs]
     finally:
         db.close()
 
@@ -443,7 +457,62 @@ def review_queue(user: Annotated[AuthUser, Depends(require_roles("reviewer"))]):
             .order_by(Document.confidence_score.asc().nullsfirst(), Document.id.desc())
             .all()
         )
-        return [serialize_document(doc) for doc in docs]
+        rows = []
+        for doc in docs:
+            review_items = db.query(ReviewItem).filter_by(document_id=doc.id, status="open").order_by(ReviewItem.id).all()
+            rows.append(
+                {
+                    **serialize_document(doc),
+                    "review_item_count": len(review_items),
+                    "first_review_reason": review_items[0].reason if review_items else None,
+                }
+            )
+        return rows
+    finally:
+        db.close()
+
+
+@app.get("/admin/failures")
+def admin_failures(
+    user: Annotated[AuthUser, Depends(require_roles("admin"))],
+    since: str = "30d",
+):
+    start = parse_since(since)
+    db = SessionLocal()
+    try:
+        examples = (
+            db.query(CorrectionExample)
+            .filter(CorrectionExample.created_at >= start)
+            .order_by(CorrectionExample.created_at.desc(), CorrectionExample.id.desc())
+            .all()
+        )
+        grouped: dict[str, list[CorrectionExample]] = defaultdict(list)
+        trends: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+        for example in examples:
+            grouped[example.failure_category].append(example)
+            trends[example.failure_category][week_key(example.created_at)] += 1
+
+        categories = []
+        for category, rows in sorted(grouped.items(), key=lambda item: (-len(item[1]), item[0])):
+            samples = []
+            for example in rows[:3]:
+                doc = db.get(Document, example.document_id)
+                samples.append(
+                    {
+                        "document_id": example.document_id,
+                        "filename": doc.filename if doc else "unknown",
+                        "diffs": (example.field_diffs or [])[:2],
+                    }
+                )
+            categories.append(
+                {
+                    "category": category,
+                    "count": len(rows),
+                    "samples": samples,
+                    "trend": [{"week": week, "count": count} for week, count in sorted(trends[category].items())],
+                }
+            )
+        return {"since": since, "categories": categories}
     finally:
         db.close()
 
@@ -577,7 +646,14 @@ def approve_document(doc_id: int, user: Annotated[AuthUser, Depends(require_role
         for item in review_items:
             item.status = "closed"
 
+        try:
+            correction_example = create_correction_example_for_document(db, doc, user.username)
+        except Exception:
+            logger.exception("Failed to create correction example for approved document doc_id=%s actor=%s", doc.id, user.username)
+            raise
         add_audit(db, doc.id, "approve", {"previous_status": previous_status, "closed_review_items": [item.id for item in review_items]}, user.username)
+        if correction_example:
+            add_audit(db, doc.id, "approve_learning", {"correction_example_id": correction_example.id}, user.username)
         db.commit()
         db.refresh(doc)
         return serialize_document(doc)
