@@ -1,5 +1,6 @@
 from conftest import (
     AuditLog,
+    DocumentVersion,
     ReviewItem,
     add_statement_fields,
     add_transactions,
@@ -53,6 +54,11 @@ def test_transaction_edit_recomputes_review_items_and_adds_audit(client, db, aut
     assert "row" in review_items[0].reason
     assert len(audit_entries) == 1
     assert audit_entries[0].details["transaction_id"] == txn.id
+    assert audit_entries[0].actor == "pytest-reviewer"
+    versions = db.query(DocumentVersion).filter_by(document_id=doc.id, source="review_edit").all()
+    assert len(versions) == 1
+    assert versions[0].actor == "pytest-reviewer"
+    assert versions[0].data["transactions"][1]["description"] == "Withdrawal corrected"
 
 
 def test_approve_closes_review_items_and_records_audit(client, db, auth_headers):

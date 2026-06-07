@@ -20,7 +20,7 @@ os.environ.setdefault("MINIO_PORT", "9000")
 
 from app import main  # noqa: E402
 from app.auth import AuthUser, create_access_token  # noqa: E402
-from app.models import AuditLog, Document, ReviewItem, Transaction  # noqa: E402
+from app.models import AuditLog, Document, DocumentVersion, ReviewItem, Transaction  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -54,7 +54,7 @@ def auth_headers():
 
 def cleanup_pytest_rows():
     with main.engine.begin() as conn:
-        for table in ("audit_log", "transactions", "review_items"):
+        for table in ("audit_log", "document_versions", "parse_jobs", "transactions", "review_items"):
             conn.execute(
                 text(
                     f"""
@@ -124,6 +124,7 @@ def add_transactions(db, doc, *, balanced=True):
 __all__ = [
     "AuditLog",
     "Document",
+    "DocumentVersion",
     "ReviewItem",
     "Transaction",
     "add_statement_fields",

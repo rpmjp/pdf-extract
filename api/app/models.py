@@ -8,6 +8,19 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(80), unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    roles: Mapped[list[str]] = mapped_column(JSONB)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
 class Document(Base):
     __tablename__ = "documents"
 
@@ -60,6 +73,36 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(32))
     details: Mapped[dict] = mapped_column(JSONB)
     actor: Mapped[str] = mapped_column(String(80), default="reviewer")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class ParseJob(Base):
+    __tablename__ = "parse_jobs"
+
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
+    status: Mapped[str] = mapped_column(String(32))
+    queued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    retry_count: Mapped[int] = mapped_column(default=0)
+    worker_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class DocumentVersion(Base):
+    __tablename__ = "document_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id"))
+    source: Mapped[str] = mapped_column(String(32))
+    actor: Mapped[str] = mapped_column(String(80))
+    data: Mapped[dict] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

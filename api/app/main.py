@@ -9,13 +9,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 import redis
 
-from .auth import AuthUser, LoginRequest, authenticate, create_access_token, get_current_user, require_roles
+from .auth import AuthUser, LoginRequest, authenticate, configure_auth, create_access_token, get_current_user, require_roles, seed_dev_users
 from .config import settings
-from .models import AuditLog, Document, Transaction, ReviewItem
+from .models import AuditLog, Document, DocumentVersion, ParseJob, Transaction, ReviewItem
 from .storage import ensure_bucket, put_object, get_object
 from .extract import classify_and_extract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
@@ -46,6 +46,7 @@ async def record_metrics(request, call_next):
 
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
+configure_auth(SessionLocal)
 
 REQUEST_COUNT = Counter("pdf_extract_http_requests_total", "HTTP requests", ["method", "path", "status"])
 REQUEST_LATENCY = Histogram("pdf_extract_http_request_seconds", "HTTP request latency", ["method", "path"])
@@ -130,6 +131,10 @@ def recover_orphaned_job(job_id: str) -> bool:
             return True
 
         doc.status = "queued"
+        job = db.query(ParseJob).filter_by(id=job_id).first()
+        if job:
+            job.status = "queued"
+            job.error = None
         db.commit()
         parse_document_task.apply_async(args=[doc.id], task_id=job_id)
         return True
@@ -239,8 +244,34 @@ def serialize_audit_log(entry: AuditLog) -> dict:
     }
 
 
-def add_audit(db, doc_id: int, action: str, details: dict):
-    db.add(AuditLog(document_id=doc_id, action=action, details=details, actor="reviewer"))
+def serialize_parse_job(job: ParseJob) -> dict:
+    return {
+        "id": job.id,
+        "document_id": job.document_id,
+        "status": job.status,
+        "queued_at": job.queued_at.isoformat(),
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+        "error": job.error,
+        "retry_count": job.retry_count,
+        "worker_name": job.worker_name,
+        "result": job.result,
+    }
+
+
+def serialize_document_version(version: DocumentVersion) -> dict:
+    return {
+        "id": version.id,
+        "document_id": version.document_id,
+        "source": version.source,
+        "actor": version.actor,
+        "data": version.data,
+        "created_at": version.created_at.isoformat(),
+    }
+
+
+def add_audit(db, doc_id: int, action: str, details: dict, actor: str):
+    db.add(AuditLog(document_id=doc_id, action=action, details=details, actor=actor))
 
 
 def persist_upload(db, file_name: str, data: bytes) -> Document:
@@ -274,9 +305,25 @@ def recompute_review_items(db, doc: Document, transactions: list[Transaction]) -
     return recon
 
 
+def save_document_version(db, doc: Document, transactions: list[Transaction], source: str, actor: str):
+    db.add(
+        DocumentVersion(
+            document_id=doc.id,
+            source=source,
+            actor=actor,
+            data={
+                "document": serialize_document(doc),
+                "transactions": [serialize_transaction(txn) for txn in transactions],
+            },
+        )
+    )
+
+
 @app.on_event("startup")
 def startup():
     ensure_bucket()
+    if inspect(engine).has_table("users"):
+        seed_dev_users()
 
 
 @app.get("/health")
@@ -412,6 +459,8 @@ def get_document(doc_id: int, user: Annotated[AuthUser, Depends(get_current_user
         transactions = db.query(Transaction).filter_by(document_id=doc.id).order_by(Transaction.id).all()
         review_items = db.query(ReviewItem).filter_by(document_id=doc.id).order_by(ReviewItem.id).all()
         audit_log = db.query(AuditLog).filter_by(document_id=doc.id).order_by(AuditLog.created_at.desc()).all()
+        parse_jobs = db.query(ParseJob).filter_by(document_id=doc.id).order_by(ParseJob.queued_at.desc()).all()
+        versions = db.query(DocumentVersion).filter_by(document_id=doc.id).order_by(DocumentVersion.created_at.desc()).all()
 
         extraction = extraction_from_persisted(doc, transactions)
         recon = reconcile(extraction)
@@ -431,7 +480,33 @@ def get_document(doc_id: int, user: Annotated[AuthUser, Depends(get_current_user
             "transactions": [serialize_transaction(t) for t in transactions],
             "review_items": [serialize_review_item(item) for item in review_items],
             "audit_log": [serialize_audit_log(entry) for entry in audit_log],
+            "parse_jobs": [serialize_parse_job(job) for job in parse_jobs],
+            "versions": [serialize_document_version(version) for version in versions],
         }
+    finally:
+        db.close()
+
+
+@app.get("/documents/{doc_id}/jobs")
+def get_document_jobs(doc_id: int, user: Annotated[AuthUser, Depends(get_current_user)]):
+    db = SessionLocal()
+    try:
+        if not db.query(Document).filter_by(id=doc_id).first():
+            raise HTTPException(404, "Document not found")
+        jobs = db.query(ParseJob).filter_by(document_id=doc_id).order_by(ParseJob.queued_at.desc()).all()
+        return [serialize_parse_job(job) for job in jobs]
+    finally:
+        db.close()
+
+
+@app.get("/documents/{doc_id}/versions")
+def get_document_versions(doc_id: int, user: Annotated[AuthUser, Depends(require_roles("reviewer"))]):
+    db = SessionLocal()
+    try:
+        if not db.query(Document).filter_by(id=doc_id).first():
+            raise HTTPException(404, "Document not found")
+        versions = db.query(DocumentVersion).filter_by(document_id=doc_id).order_by(DocumentVersion.created_at.desc()).all()
+        return [serialize_document_version(version) for version in versions]
     finally:
         db.close()
 
@@ -472,7 +547,14 @@ def update_transaction(
             for key in ["date", "description", "amount", "type", "balance"]
             if before[key] != after[key]
         }
-        add_audit(db, doc.id, "edit_txn", {"transaction_id": txn.id, "changes": changed, "reconciliation_passed": recon["passed"]})
+        save_document_version(db, doc, transactions, "review_edit", user.username)
+        add_audit(
+            db,
+            doc.id,
+            "edit_txn",
+            {"transaction_id": txn.id, "changes": changed, "reconciliation_passed": recon["passed"]},
+            user.username,
+        )
 
         db.commit()
         db.refresh(txn)
@@ -495,7 +577,7 @@ def approve_document(doc_id: int, user: Annotated[AuthUser, Depends(require_role
         for item in review_items:
             item.status = "closed"
 
-        add_audit(db, doc.id, "approve", {"previous_status": previous_status, "closed_review_items": [item.id for item in review_items]})
+        add_audit(db, doc.id, "approve", {"previous_status": previous_status, "closed_review_items": [item.id for item in review_items]}, user.username)
         db.commit()
         db.refresh(doc)
         return serialize_document(doc)
@@ -520,7 +602,7 @@ def reject_document(
         reason = payload.reason if payload and payload.reason else "Rejected by reviewer"
         db.add(ReviewItem(document_id=doc.id, reason=reason, status="closed"))
 
-        add_audit(db, doc.id, "reject", {"previous_status": previous_status, "reason": reason})
+        add_audit(db, doc.id, "reject", {"previous_status": previous_status, "reason": reason}, user.username)
         db.commit()
         db.refresh(doc)
         return serialize_document(doc)
@@ -617,6 +699,7 @@ def parse_document(doc_id: int, user: Annotated[AuthUser, Depends(require_roles(
         job_id = str(uuid.uuid4())
         doc.status = "queued"
         doc.current_job_id = job_id
+        db.add(ParseJob(id=job_id, document_id=doc.id, status="queued", retry_count=0))
         db.commit()
 
         parse_document_task.apply_async(args=[doc.id], task_id=job_id)

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from celery import Celery, Task
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -6,7 +8,7 @@ from .confidence import document_confidence, transaction_confidence
 from .config import settings
 from .extract import classify_and_extract, extract_text_with_tesseract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
-from .models import Document, ReviewItem, Transaction
+from .models import Document, DocumentVersion, ParseJob, ReviewItem, Transaction
 from .reconcile import correct_signs_from_balances, reconcile
 from .storage import get_object
 
@@ -31,8 +33,15 @@ def mark_failed(doc_id: int, message: str):
     try:
         doc = db.query(Document).filter_by(id=doc_id).first()
         if doc:
+            job_id = doc.current_job_id
             doc.status = "failed"
             doc.current_job_id = None
+            if job_id:
+                job = db.query(ParseJob).filter_by(id=job_id).first()
+                if job:
+                    job.status = "failed"
+                    job.finished_at = datetime.now(timezone.utc)
+                    job.error = message[:4000]
             db.add(ReviewItem(document_id=doc.id, reason=message[:1000], status="open"))
             db.commit()
     finally:
@@ -61,6 +70,14 @@ def parse_document_task(self, doc_id: int):
 
         doc.status = "parsing"
         doc.current_job_id = self.request.id
+        job = db.query(ParseJob).filter_by(id=self.request.id).first()
+        if not job:
+            job = ParseJob(id=self.request.id, document_id=doc.id, status="parsing", retry_count=0)
+            db.add(job)
+        job.status = "parsing"
+        job.started_at = datetime.now(timezone.utc)
+        job.worker_name = self.request.hostname
+        job.retry_count = self.request.retries
         db.commit()
 
         pdf_bytes = get_object(doc.minio_key)
@@ -128,14 +145,28 @@ def parse_document_task(self, doc_id: int):
             failed = [c["detail"] for c in recon["checks"] if not c["passed"]]
             db.add(ReviewItem(document_id=doc.id, reason="; ".join(failed)))
 
-        db.commit()
-        return {
+        result_payload = {
             "id": doc.id,
             "status": doc.status,
             "reconciliation": recon,
             "confidence_score": confidence,
             "extraction": result.model_dump(),
         }
+        db.add(
+            DocumentVersion(
+                document_id=doc.id,
+                source="llm_parse",
+                actor="worker",
+                data=result_payload,
+            )
+        )
+        job.status = "success"
+        job.finished_at = datetime.now(timezone.utc)
+        job.error = None
+        job.result = result_payload
+
+        db.commit()
+        return result_payload
     except Exception:
         db.rollback()
         raise

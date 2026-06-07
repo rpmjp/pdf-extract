@@ -1,20 +1,22 @@
-import base64
-import hashlib
-import hmac
-import json
 from datetime import datetime, timedelta, timezone
-from typing import Annotated
+from typing import Annotated, Callable
 
+import jwt
 from fastapi import Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from passlib.context import CryptContext
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
 from .config import settings
+from .models import User
 
 
 security = HTTPBearer(auto_error=False)
+password_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+get_db_session: Callable[[], Session] | None = None
 
-USERS = {
+DEV_USERS = {
     "uploader": {"password": "upload123", "roles": ["uploader"]},
     "reviewer": {"password": "review123", "roles": ["reviewer", "uploader"]},
     "admin": {"password": "admin123", "roles": ["admin", "reviewer", "uploader"]},
@@ -31,57 +33,73 @@ class AuthUser(BaseModel):
     roles: list[str]
 
 
-def _b64encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+def configure_auth(session_factory: Callable[[], Session]):
+    global get_db_session
+    get_db_session = session_factory
 
 
-def _b64decode(data: str) -> bytes:
-    padding = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(data + padding)
+def hash_password(password: str) -> str:
+    return password_context.hash(password)
 
 
-def _sign(message: str) -> str:
-    digest = hmac.new(settings.jwt_secret.encode(), message.encode(), hashlib.sha256).digest()
-    return _b64encode(digest)
+def verify_password(password: str, password_hash: str) -> bool:
+    return password_context.verify(password, password_hash)
+
+
+def seed_dev_users():
+    if get_db_session is None:
+        raise RuntimeError("Auth database session factory is not configured")
+
+    db = get_db_session()
+    try:
+        for username, data in DEV_USERS.items():
+            user = db.query(User).filter_by(username=username).first()
+            if user:
+                continue
+            db.add(
+                User(
+                    username=username,
+                    password_hash=hash_password(data["password"]),
+                    roles=data["roles"],
+                    is_active=True,
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
 
 
 def create_access_token(user: AuthUser) -> str:
     now = datetime.now(timezone.utc)
-    header = {"alg": "HS256", "typ": "JWT"}
     payload = {
         "sub": user.username,
         "roles": user.roles,
-        "iat": int(now.timestamp()),
-        "exp": int((now + timedelta(minutes=settings.access_token_minutes)).timestamp()),
+        "iat": now,
+        "exp": now + timedelta(minutes=settings.access_token_minutes),
     }
-    signing_input = ".".join(
-        [
-            _b64encode(json.dumps(header, separators=(",", ":")).encode()),
-            _b64encode(json.dumps(payload, separators=(",", ":")).encode()),
-        ]
-    )
-    return f"{signing_input}.{_sign(signing_input)}"
+    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
 def decode_access_token(token: str) -> AuthUser:
     try:
-        header, payload, signature = token.split(".")
-        signing_input = f"{header}.{payload}"
-        if not hmac.compare_digest(_sign(signing_input), signature):
-            raise ValueError("bad signature")
-        data = json.loads(_b64decode(payload))
-        if int(data["exp"]) < int(datetime.now(timezone.utc).timestamp()):
-            raise ValueError("expired")
+        data = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
         return AuthUser(username=data["sub"], roles=list(data.get("roles", [])))
-    except Exception:
+    except jwt.PyJWTError:
         raise HTTPException(401, "Invalid or expired token")
 
 
 def authenticate(username: str, password: str) -> AuthUser:
-    record = USERS.get(username)
-    if not record or not hmac.compare_digest(record["password"], password):
-        raise HTTPException(401, "Invalid username or password")
-    return AuthUser(username=username, roles=record["roles"])
+    if get_db_session is None:
+        raise RuntimeError("Auth database session factory is not configured")
+
+    db = get_db_session()
+    try:
+        user = db.query(User).filter_by(username=username).first()
+        if not user or not user.is_active or not verify_password(password, user.password_hash):
+            raise HTTPException(401, "Invalid username or password")
+        return AuthUser(username=user.username, roles=list(user.roles))
+    finally:
+        db.close()
 
 
 def get_current_user(

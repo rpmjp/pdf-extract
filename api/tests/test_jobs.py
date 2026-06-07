@@ -1,4 +1,5 @@
 from conftest import create_document, main
+from app.models import ParseJob
 
 
 class FakeAsyncResult:
@@ -51,6 +52,9 @@ def test_parse_enqueues_job_and_reuses_active_job(client, db, auth_headers, monk
     db.refresh(doc)
     assert doc.status == "queued"
     assert doc.current_job_id == first_body["job_id"]
+    job = db.query(ParseJob).filter_by(id=first_body["job_id"]).first()
+    assert job.status == "queued"
+    assert job.document_id == doc.id
 
     second = client.post(f"/documents/{doc.id}/parse", headers=auth_headers)
 
