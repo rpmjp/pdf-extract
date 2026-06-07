@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-change-me"
     access_token_minutes: int = 480
     ocr_fallback_enabled: bool = False
+    ensemble_confidence_enabled: bool = True
 
     @property
     def minio_endpoint(self) -> str:

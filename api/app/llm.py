@@ -45,6 +45,14 @@ E) balance: the running balance shown for that row.
 F) dates in YYYY-MM-DD. opening_balance and closing_balance are the
    statement's STATED totals, never transaction amounts."""
 
+ENSEMBLE_SYSTEM_PROMPT = SYSTEM_PROMPT + """
+
+SECOND PASS INSTRUCTIONS
+- Re-read the document independently.
+- Prefer literal source values over inferred values.
+- Be conservative: leave balance null if no running balance is visible.
+- Keep transaction ordering exactly as it appears in the statement."""
+
 
 def _chat(payload) -> StatementExtraction:
     req = urllib.request.Request(
@@ -58,12 +66,18 @@ def _chat(payload) -> StatementExtraction:
     return StatementExtraction.model_validate_json(content)
 
 
-def extract_statement(text: str) -> StatementExtraction:
+def extract_statement(text: str, variant: str = "primary") -> StatementExtraction:
+    prompt = ENSEMBLE_SYSTEM_PROMPT if variant == "ensemble" else SYSTEM_PROMPT
+    user_text = (
+        "Independently extract this bank statement for cross-checking:\n\n"
+        if variant == "ensemble"
+        else "Extract this bank statement:\n\n"
+    )
     return _chat({
         "model": settings.llm_model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Extract this bank statement:\n\n{text}"},
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": f"{user_text}{text}"},
         ],
         "stream": False,
         "format": StatementExtraction.model_json_schema(),
@@ -71,13 +85,19 @@ def extract_statement(text: str) -> StatementExtraction:
     })
 
 
-def extract_statement_from_images(images_b64: list[str]) -> StatementExtraction:
+def extract_statement_from_images(images_b64: list[str], variant: str = "primary") -> StatementExtraction:
+    prompt = ENSEMBLE_SYSTEM_PROMPT if variant == "ensemble" else SYSTEM_PROMPT
+    user_text = (
+        "Independently extract this bank statement from the page image(s) for cross-checking."
+        if variant == "ensemble"
+        else "Extract this bank statement from the page image(s)."
+    )
     return _chat({
         "model": settings.llm_model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": prompt},
             {"role": "user",
-             "content": "Extract this bank statement from the page image(s).",
+             "content": user_text,
              "images": images_b64},
         ],
         "stream": False,

@@ -2,6 +2,7 @@ import io
 import pdfplumber
 import base64
 import fitz  # pymupdf
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 
 
 def classify_and_extract(pdf_bytes: bytes) -> dict:
@@ -27,7 +28,40 @@ def classify_and_extract(pdf_bytes: bytes) -> dict:
     return result
 
 
-def render_pages_to_images(pdf_bytes: bytes, dpi: int = 200) -> list[str]:
+def deskew_image(image: Image.Image) -> Image.Image:
+    gray = ImageOps.grayscale(image)
+    best_angle = 0
+    best_score = None
+    for angle in (-2, -1, 0, 1, 2):
+        rotated = gray.rotate(angle, expand=True, fillcolor=255)
+        rows = []
+        pixels = rotated.load()
+        width, height = rotated.size
+        for y in range(0, height, 4):
+            dark = 0
+            for x in range(0, width, 4):
+                if pixels[x, y] < 200:
+                    dark += 1
+            rows.append(dark)
+        mean = sum(rows) / len(rows) if rows else 0
+        score = sum((row - mean) ** 2 for row in rows)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_angle = angle
+    return image.rotate(best_angle, expand=True, fillcolor="white")
+
+
+def preprocess_page_image(image: Image.Image) -> Image.Image:
+    image = deskew_image(image.convert("RGB"))
+    gray = ImageOps.grayscale(image)
+    gray = ImageOps.autocontrast(gray)
+    gray = ImageEnhance.Contrast(gray).enhance(1.5)
+    gray = gray.filter(ImageFilter.MedianFilter(size=3))
+    gray = gray.filter(ImageFilter.SHARPEN)
+    return gray.convert("RGB")
+
+
+def render_pages_to_images(pdf_bytes: bytes, dpi: int = 200, preprocess: bool = False) -> list[str]:
     """Render every PDF page to a base64-encoded PNG."""
     images = []
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -36,7 +70,13 @@ def render_pages_to_images(pdf_bytes: bytes, dpi: int = 200) -> list[str]:
         matrix = fitz.Matrix(zoom, zoom)
         for page in doc:
             pix = page.get_pixmap(matrix=matrix)
-            images.append(base64.b64encode(pix.tobytes("png")).decode())
+            if preprocess:
+                image = Image.open(io.BytesIO(pix.tobytes("png")))
+                output = io.BytesIO()
+                preprocess_page_image(image).save(output, format="PNG")
+                images.append(base64.b64encode(output.getvalue()).decode())
+            else:
+                images.append(base64.b64encode(pix.tobytes("png")).decode())
     finally:
         doc.close()
     return images
@@ -58,7 +98,7 @@ def extract_text_with_tesseract(pdf_bytes: bytes, dpi: int = 200) -> str | None:
         for page in doc:
             pix = page.get_pixmap(matrix=matrix)
             image = Image.open(io.BytesIO(pix.tobytes("png")))
-            text = pytesseract.image_to_string(image)
+            text = pytesseract.image_to_string(preprocess_page_image(image))
             if text.strip():
                 chunks.append(text)
     except Exception:

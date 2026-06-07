@@ -4,7 +4,7 @@ from celery import Celery, Task
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from .confidence import document_confidence, transaction_confidence
+from .confidence import apply_disagreement_penalty, document_confidence, extraction_disagreement, transaction_confidence
 from .config import settings
 from .extract import classify_and_extract, extract_text_with_tesseract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
@@ -82,8 +82,11 @@ def parse_document_task(self, doc_id: int):
 
         pdf_bytes = get_object(doc.minio_key)
         extracted = classify_and_extract(pdf_bytes)
+        source_for_ensemble = None
+        images = None
         if extracted["kind"] == "digital":
             text = "\n\n".join(p["text"] for p in extracted["pages"])
+            source_for_ensemble = text
             result = extract_statement(text)
         else:
             images = render_pages_to_images(pdf_bytes)
@@ -93,6 +96,25 @@ def parse_document_task(self, doc_id: int):
         recon = reconcile(result)
         recon["sign_corrections"] = corrections
         confidence = document_confidence(result, document_kind=extracted["kind"], reconciliation_passed=recon["passed"])
+        disagreement = {"score": 0, "checks": []}
+
+        if extracted["kind"] == "scanned" and confidence < 0.75:
+            preprocessed_images = render_pages_to_images(pdf_bytes, preprocess=True)
+            preprocessed_result = extract_statement_from_images(preprocessed_images)
+            preprocessed_corrections = correct_signs_from_balances(preprocessed_result)
+            preprocessed_recon = reconcile(preprocessed_result)
+            preprocessed_recon["sign_corrections"] = preprocessed_corrections
+            preprocessed_confidence = document_confidence(
+                preprocessed_result,
+                document_kind="scanned",
+                reconciliation_passed=preprocessed_recon["passed"],
+            )
+            if preprocessed_confidence > confidence:
+                images = preprocessed_images
+                result = preprocessed_result
+                corrections = preprocessed_corrections
+                recon = preprocessed_recon
+                confidence = preprocessed_confidence
 
         if settings.ocr_fallback_enabled and extracted["kind"] == "scanned" and confidence < 0.75:
             fallback_text = extract_text_with_tesseract(pdf_bytes)
@@ -111,6 +133,16 @@ def parse_document_task(self, doc_id: int):
                     corrections = fallback_corrections
                     recon = fallback_recon
                     confidence = fallback_confidence
+                    source_for_ensemble = fallback_text
+
+        if settings.ensemble_confidence_enabled:
+            if source_for_ensemble is not None:
+                ensemble_result = extract_statement(source_for_ensemble, variant="ensemble")
+            else:
+                ensemble_result = extract_statement_from_images(images or render_pages_to_images(pdf_bytes), variant="ensemble")
+            correct_signs_from_balances(ensemble_result)
+            disagreement = extraction_disagreement(result, ensemble_result)
+            confidence = apply_disagreement_penalty(confidence, disagreement)
 
         doc.status = "verified" if recon["passed"] else "needs_review"
         doc.current_job_id = None
@@ -144,12 +176,16 @@ def parse_document_task(self, doc_id: int):
         if not recon["passed"]:
             failed = [c["detail"] for c in recon["checks"] if not c["passed"]]
             db.add(ReviewItem(document_id=doc.id, reason="; ".join(failed)))
+        if disagreement["checks"]:
+            sample = "; ".join(item["field"] for item in disagreement["checks"][:8])
+            db.add(ReviewItem(document_id=doc.id, reason=f"LLM ensemble disagreement: {sample}"))
 
         result_payload = {
             "id": doc.id,
             "status": doc.status,
             "reconciliation": recon,
             "confidence_score": confidence,
+            "ensemble_disagreement": disagreement,
             "extraction": result.model_dump(),
         }
         db.add(

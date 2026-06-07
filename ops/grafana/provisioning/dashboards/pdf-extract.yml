@@ -1,0 +1,11 @@
+apiVersion: 1
+
+providers:
+  - name: PDF Extract
+    orgId: 1
+    folder: PDF Extract
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards

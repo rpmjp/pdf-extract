@@ -1,5 +1,6 @@
 from app.reconcile import correct_signs_from_balances, reconcile
 from app.schemas import StatementExtraction, Transaction
+from app.confidence import apply_disagreement_penalty, extraction_disagreement
 
 
 def test_reconcile_passes_balanced_statement():
@@ -51,3 +52,30 @@ def test_correct_signs_uses_balances_as_ground_truth():
 
     assert corrections == 2
     assert [txn.type for txn in statement.transactions] == ["deposit", "withdrawal"]
+
+
+def test_ensemble_disagreement_penalizes_confidence():
+    primary = StatementExtraction(
+        account_holder="Test Holder",
+        opening_balance=100,
+        closing_balance=125,
+        transactions=[
+            Transaction(date="2026-01-01", description="Deposit", amount=50, type="deposit", balance=150),
+            Transaction(date="2026-01-02", description="Withdrawal", amount=25, type="withdrawal", balance=125),
+        ],
+    )
+    secondary = StatementExtraction(
+        account_holder="Test Holder",
+        opening_balance=100,
+        closing_balance=120,
+        transactions=[
+            Transaction(date="2026-01-01", description="Deposit", amount=50, type="deposit", balance=150),
+            Transaction(date="2026-01-02", description="Withdrawal", amount=30, type="withdrawal", balance=120),
+        ],
+    )
+
+    disagreement = extraction_disagreement(primary, secondary)
+
+    assert disagreement["score"] > 0
+    assert any(item["field"] == "closing_balance" for item in disagreement["checks"])
+    assert apply_disagreement_penalty(0.9, disagreement) < 0.9
