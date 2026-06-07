@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 interface DropzoneProps {
   disabled?: boolean;
   onFileSelected: (file: File) => void;
+  onFilesSelected?: (files: File[]) => void;
   onInvalidFile: (message: string) => void;
 }
 
@@ -12,18 +13,21 @@ function isPdf(file: File) {
   return hasPdfExtension && (!file.type || hasPdfMime);
 }
 
-export default function Dropzone({ disabled = false, onFileSelected, onInvalidFile }: DropzoneProps) {
+export default function Dropzone({ disabled = false, onFileSelected, onFilesSelected, onInvalidFile }: DropzoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const dragDepth = useRef(0);
   const [isDragging, setIsDragging] = useState(false);
 
-  const selectFile = (file: File | undefined) => {
-    if (!file) return;
-    if (!isPdf(file)) {
+  const selectFiles = (fileList: FileList | null) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    const invalid = files.find((file) => !isPdf(file));
+    if (invalid) {
       onInvalidFile("Only PDFs accepted.");
       return;
     }
-    onFileSelected(file);
+    if (files.length === 1 || !onFilesSelected) onFileSelected(files[0]);
+    else onFilesSelected(files);
   };
 
   return (
@@ -48,7 +52,7 @@ export default function Dropzone({ disabled = false, onFileSelected, onInvalidFi
         event.preventDefault();
         dragDepth.current = 0;
         setIsDragging(false);
-        selectFile(event.dataTransfer.files[0]);
+        selectFiles(event.dataTransfer.files);
       }}
       className={`w-full rounded-lg border-2 border-dashed p-12 text-center transition ${
         isDragging
@@ -60,8 +64,9 @@ export default function Dropzone({ disabled = false, onFileSelected, onInvalidFi
         ref={inputRef}
         type="file"
         accept="application/pdf,.pdf"
+        multiple
         className="hidden"
-        onChange={(event) => selectFile(event.target.files?.[0])}
+        onChange={(event) => selectFiles(event.target.files)}
       />
       <span className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded border border-slate-300 bg-slate-50 text-sm font-semibold text-slate-700">
         PDF

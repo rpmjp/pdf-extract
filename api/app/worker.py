@@ -2,8 +2,9 @@ from celery import Celery, Task
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from .confidence import document_confidence, transaction_confidence
 from .config import settings
-from .extract import classify_and_extract, render_pages_to_images
+from .extract import classify_and_extract, extract_text_with_tesseract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
 from .models import Document, ReviewItem, Transaction
 from .reconcile import correct_signs_from_balances, reconcile
@@ -74,6 +75,25 @@ def parse_document_task(self, doc_id: int):
         corrections = correct_signs_from_balances(result)
         recon = reconcile(result)
         recon["sign_corrections"] = corrections
+        confidence = document_confidence(result, document_kind=extracted["kind"], reconciliation_passed=recon["passed"])
+
+        if settings.ocr_fallback_enabled and extracted["kind"] == "scanned" and confidence < 0.75:
+            fallback_text = extract_text_with_tesseract(pdf_bytes)
+            if fallback_text:
+                fallback_result = extract_statement(fallback_text)
+                fallback_corrections = correct_signs_from_balances(fallback_result)
+                fallback_recon = reconcile(fallback_result)
+                fallback_recon["sign_corrections"] = fallback_corrections
+                fallback_confidence = document_confidence(
+                    fallback_result,
+                    document_kind="digital",
+                    reconciliation_passed=fallback_recon["passed"],
+                )
+                if fallback_confidence > confidence:
+                    result = fallback_result
+                    corrections = fallback_corrections
+                    recon = fallback_recon
+                    confidence = fallback_confidence
 
         doc.status = "verified" if recon["passed"] else "needs_review"
         doc.current_job_id = None
@@ -82,6 +102,7 @@ def parse_document_task(self, doc_id: int):
         doc.statement_period = result.statement_period
         doc.opening_balance = result.opening_balance
         doc.closing_balance = result.closing_balance
+        doc.confidence_score = confidence
 
         db.query(Transaction).filter_by(document_id=doc.id).delete()
         db.query(ReviewItem).filter_by(document_id=doc.id).delete()
@@ -95,6 +116,11 @@ def parse_document_task(self, doc_id: int):
                     amount=t.amount,
                     type=t.type,
                     balance=t.balance,
+                    confidence=transaction_confidence(
+                        t,
+                        document_kind=extracted["kind"],
+                        reconciliation_passed=recon["passed"],
+                    ),
                 )
             )
 
@@ -107,6 +133,7 @@ def parse_document_task(self, doc_id: int):
             "id": doc.id,
             "status": doc.status,
             "reconciliation": recon,
+            "confidence_score": confidence,
             "extraction": result.model_dump(),
         }
     except Exception:

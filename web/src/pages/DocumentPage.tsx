@@ -7,7 +7,7 @@ import PdfViewer from "../components/PdfViewer";
 import ReconciliationPanel from "../components/ReconciliationPanel";
 import ReviewControls from "../components/ReviewControls";
 import TransactionsTable from "../components/TransactionsTable";
-import { api, type DocumentDetail } from "../api";
+import { api, getAuthToken, type DocumentDetail } from "../api";
 
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
@@ -42,7 +42,8 @@ export default function DocumentPage() {
   if (isLoading) return <p className="text-slate-500">Loading...</p>;
   if (error || !data || !id) return <p className="text-rose-600">Failed to load document.</p>;
 
-  const pdfUrl = `${api.defaults.baseURL}/documents/${id}/file`;
+  const token = getAuthToken();
+  const pdfUrl = `${api.defaults.baseURL}/documents/${id}/file${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   const isProcessing = data.status === "queued" || data.status === "parsing";
   const hasFailed = data.status === "failed";
 

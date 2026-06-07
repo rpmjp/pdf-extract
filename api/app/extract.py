@@ -3,6 +3,7 @@ import pdfplumber
 import base64
 import fitz  # pymupdf
 
+
 def classify_and_extract(pdf_bytes: bytes) -> dict:
     """Detect digital vs scanned, and pull text + word boxes from a PDF."""
     result = {"kind": None, "pages": []}
@@ -39,3 +40,30 @@ def render_pages_to_images(pdf_bytes: bytes, dpi: int = 200) -> list[str]:
     finally:
         doc.close()
     return images
+
+
+def extract_text_with_tesseract(pdf_bytes: bytes, dpi: int = 200) -> str | None:
+    """Optional OCR fallback. Returns None when pytesseract/tesseract is unavailable."""
+    try:
+        import pytesseract
+        from PIL import Image
+    except Exception:
+        return None
+
+    chunks = []
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        zoom = dpi / 72
+        matrix = fitz.Matrix(zoom, zoom)
+        for page in doc:
+            pix = page.get_pixmap(matrix=matrix)
+            image = Image.open(io.BytesIO(pix.tobytes("png")))
+            text = pytesseract.image_to_string(image)
+            if text.strip():
+                chunks.append(text)
+    except Exception:
+        return None
+    finally:
+        doc.close()
+
+    return "\n\n".join(chunks) if chunks else None

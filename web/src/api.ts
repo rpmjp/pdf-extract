@@ -4,6 +4,34 @@ const baseURL = import.meta.env.VITE_API_URL || "http://localhost:8003";
 
 export const api = axios.create({ baseURL });
 
+const TOKEN_KEY = "pdf_extract_token";
+
+export function getAuthToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+export function setAuthToken(token: string | null) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+api.interceptors.request.use((config) => {
+  const token = getAuthToken();
+  if (token) config.headers.Authorization = `Bearer ${token}`;
+  return config;
+});
+
+export interface AuthUser {
+  username: string;
+  roles: string[];
+}
+
+export interface LoginResponse {
+  access_token: string;
+  token_type: "bearer";
+  user: AuthUser;
+}
+
 export type DocStatus =
   | "uploaded"
   | "queued"
@@ -28,6 +56,7 @@ export interface Document {
   statement_period?: string | null;
   opening_balance?: number | null;
   closing_balance?: number | null;
+  confidence_score?: number | null;
 }
 
 export interface Transaction {
@@ -37,6 +66,7 @@ export interface Transaction {
   amount: number;
   type: "deposit" | "withdrawal";
   balance: number | null;
+  confidence?: number | null;
 }
 
 export interface Extraction {
@@ -76,6 +106,15 @@ export interface JobResponse {
   status: JobStatus;
   result?: ParseResponse;
   error?: string;
+}
+
+export interface BatchUploadResponse {
+  results: {
+    filename: string;
+    document: Document | null;
+    error: string | null;
+    duplicate_id?: number | null;
+  }[];
 }
 
 export type ParseJob = JobResponse;

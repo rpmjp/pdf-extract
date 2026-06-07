@@ -7,7 +7,7 @@ from conftest import (
 )
 
 
-def test_detail_returns_doc_fields_transactions_review_and_audit(client, db):
+def test_detail_returns_doc_fields_transactions_review_and_audit(client, db, auth_headers):
     doc = create_document(db, filename="pytest-detail.pdf", status="needs_review")
     add_statement_fields(doc)
     db.add(ReviewItem(document_id=doc.id, reason="Needs a look"))
@@ -15,7 +15,7 @@ def test_detail_returns_doc_fields_transactions_review_and_audit(client, db):
     db.add(AuditLog(document_id=doc.id, action="seed", details={"ok": True}, actor="pytest"))
     db.commit()
 
-    response = client.get(f"/documents/{doc.id}")
+    response = client.get(f"/documents/{doc.id}", headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -26,7 +26,7 @@ def test_detail_returns_doc_fields_transactions_review_and_audit(client, db):
     assert body["audit_log"][0]["action"] == "seed"
 
 
-def test_transaction_edit_recomputes_review_items_and_adds_audit(client, db):
+def test_transaction_edit_recomputes_review_items_and_adds_audit(client, db, auth_headers):
     doc = create_document(db, filename="pytest-edit.pdf", status="needs_review")
     add_statement_fields(doc)
     transactions = add_transactions(db, doc)
@@ -34,6 +34,7 @@ def test_transaction_edit_recomputes_review_items_and_adds_audit(client, db):
 
     response = client.patch(
         f"/documents/{doc.id}/transactions/{txn.id}",
+        headers=auth_headers,
         json={
             "date": "2026-01-02",
             "description": "Withdrawal corrected",
@@ -54,12 +55,12 @@ def test_transaction_edit_recomputes_review_items_and_adds_audit(client, db):
     assert audit_entries[0].details["transaction_id"] == txn.id
 
 
-def test_approve_closes_review_items_and_records_audit(client, db):
+def test_approve_closes_review_items_and_records_audit(client, db, auth_headers):
     doc = create_document(db, filename="pytest-approve.pdf", status="needs_review")
     db.add(ReviewItem(document_id=doc.id, reason="Open issue", status="open"))
     db.commit()
 
-    response = client.post(f"/documents/{doc.id}/approve")
+    response = client.post(f"/documents/{doc.id}/approve", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json()["status"] == "approved"
@@ -67,14 +68,28 @@ def test_approve_closes_review_items_and_records_audit(client, db):
     assert db.query(AuditLog).filter_by(document_id=doc.id, action="approve").count() == 1
 
 
-def test_reject_hides_document_from_dashboard(client, db):
+def test_reject_hides_document_from_dashboard(client, db, auth_headers):
     doc = create_document(db, filename="pytest-reject.pdf", status="needs_review")
 
-    response = client.post(f"/documents/{doc.id}/reject", json={"reason": "Bad source"})
+    response = client.post(f"/documents/{doc.id}/reject", headers=auth_headers, json={"reason": "Bad source"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "rejected"
     assert db.query(AuditLog).filter_by(document_id=doc.id, action="reject").count() == 1
 
-    dashboard = client.get("/documents")
+    dashboard = client.get("/documents", headers=auth_headers)
     assert doc.id not in {row["id"] for row in dashboard.json()}
+
+
+def test_review_queue_sorts_lowest_confidence_first(client, db, auth_headers):
+    low = create_document(db, filename="pytest-low-confidence.pdf", status="needs_review")
+    high = create_document(db, filename="pytest-high-confidence.pdf", status="needs_review")
+    low.confidence_score = 0.32
+    high.confidence_score = 0.88
+    db.commit()
+
+    response = client.get("/review-queue", headers=auth_headers)
+
+    assert response.status_code == 200
+    ids = [row["id"] for row in response.json()]
+    assert ids.index(low.id) < ids.index(high.id)

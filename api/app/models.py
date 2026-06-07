@@ -22,6 +22,7 @@ class Document(Base):
     statement_period: Mapped[str | None] = mapped_column(String(128), nullable=True)
     opening_balance: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
     closing_balance: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    confidence_score: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )
@@ -36,6 +37,7 @@ class Transaction(Base):
     amount: Mapped[float] = mapped_column(Numeric(14, 2))
     type: Mapped[str] = mapped_column(String(12))
     balance: Mapped[float | None] = mapped_column(Numeric(14, 2), nullable=True)
+    confidence: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
 
 
 class ReviewItem(Base):

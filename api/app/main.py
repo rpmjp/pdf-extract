@@ -1,14 +1,19 @@
 import hashlib
+import time
 import uuid
+from typing import Annotated
+
 from celery.result import AsyncResult
-from fastapi import FastAPI, UploadFile, File, HTTPException, Response, Header, status
+from fastapi import Depends, FastAPI, UploadFile, File, HTTPException, Response, Header, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 import redis
 
+from .auth import AuthUser, LoginRequest, authenticate, create_access_token, get_current_user, require_roles
 from .config import settings
 from .models import AuditLog, Document, Transaction, ReviewItem
 from .storage import ensure_bucket, put_object, get_object
@@ -27,8 +32,24 @@ app.add_middleware(
     expose_headers=["Accept-Ranges", "Content-Length", "Content-Range", "Content-Disposition"],
 )
 
+
+@app.middleware("http")
+async def record_metrics(request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    route = request.scope.get("route")
+    path = route.path if route else request.url.path
+    REQUEST_COUNT.labels(request.method, path, str(response.status_code)).inc()
+    REQUEST_LATENCY.labels(request.method, path).observe(time.perf_counter() - start)
+    return response
+
+
 engine = create_engine(settings.database_url, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
+
+REQUEST_COUNT = Counter("pdf_extract_http_requests_total", "HTTP requests", ["method", "path", "status"])
+REQUEST_LATENCY = Histogram("pdf_extract_http_request_seconds", "HTTP request latency", ["method", "path"])
+QUEUE_DEPTH = Gauge("pdf_extract_celery_queue_depth", "Celery broker queue depth")
 
 
 class TransactionUpdate(BaseModel):
@@ -43,6 +64,13 @@ class RejectRequest(BaseModel):
     reason: str | None = None
 
 
+class BatchUploadResult(BaseModel):
+    filename: str
+    document: dict | None = None
+    error: str | None = None
+    duplicate_id: int | None = None
+
+
 ACTIVE_JOB_STATES = {"PENDING", "RECEIVED", "STARTED", "RETRY"}
 RECOVERABLE_DOCUMENT_STATES = {"queued", "parsing"}
 JOB_RECOVERY_LOCK_SECONDS = 30
@@ -55,6 +83,11 @@ def broker_has_pending_job(job_id: str) -> bool:
         if job_id_bytes in message:
             return True
     return False
+
+
+def celery_queue_depth() -> int:
+    client = redis.Redis(host=settings.redis_host, port=settings.redis_port, db=0)
+    return client.llen("celery")
 
 
 def celery_inspect_has_job(job_id: str) -> bool:
@@ -150,6 +183,7 @@ def serialize_document(doc: Document) -> dict:
         "statement_period": doc.statement_period,
         "opening_balance": float(doc.opening_balance) if doc.opening_balance is not None else None,
         "closing_balance": float(doc.closing_balance) if doc.closing_balance is not None else None,
+        "confidence_score": float(doc.confidence_score) if doc.confidence_score is not None else None,
     }
 
 
@@ -181,6 +215,7 @@ def serialize_transaction(t: Transaction) -> dict:
         "amount": float(t.amount),
         "type": t.type,
         "balance": float(t.balance) if t.balance is not None else None,
+        "confidence": float(t.confidence) if t.confidence is not None else None,
     }
 
 
@@ -206,6 +241,24 @@ def serialize_audit_log(entry: AuditLog) -> dict:
 
 def add_audit(db, doc_id: int, action: str, details: dict):
     db.add(AuditLog(document_id=doc_id, action=action, details=details, actor="reviewer"))
+
+
+def persist_upload(db, file_name: str, data: bytes) -> Document:
+    if not file_name.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files accepted")
+
+    sha256 = hashlib.sha256(data).hexdigest()
+    existing = db.query(Document).filter_by(sha256=sha256).first()
+    if existing:
+        raise HTTPException(409, f"Document already exists (id={existing.id})")
+
+    key = f"{sha256}.pdf"
+    put_object(key, data)
+    doc = Document(filename=file_name, sha256=sha256, minio_key=key)
+    db.add(doc)
+    db.commit()
+    db.refresh(doc)
+    return doc
 
 
 def recompute_review_items(db, doc: Document, transactions: list[Transaction]) -> dict:
@@ -249,39 +302,73 @@ def health_deps():
     return deps
 
 
+@app.get("/metrics")
+def metrics():
+    try:
+        QUEUE_DEPTH.set(celery_queue_depth())
+    except Exception:
+        QUEUE_DEPTH.set(-1)
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+@app.post("/auth/login")
+def login(payload: LoginRequest):
+    user = authenticate(payload.username, payload.password)
+    return {"access_token": create_access_token(user), "token_type": "bearer", "user": user.model_dump()}
+
+
+@app.get("/auth/me")
+def me(user: Annotated[AuthUser, Depends(get_current_user)]):
+    return user
+
+
 @app.get("/jobs/{job_id}")
-def get_job(job_id: str):
+def get_job(job_id: str, user: Annotated[AuthUser, Depends(get_current_user)]):
     return serialize_job(job_id)
 
 
 @app.post("/documents")
-async def upload_document(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(400, "Only PDF files accepted")
-
+async def upload_document(
+    user: Annotated[AuthUser, Depends(require_roles("uploader"))],
+    file: UploadFile = File(...),
+):
     data = await file.read()
-    sha256 = hashlib.sha256(data).hexdigest()
-
     db = SessionLocal()
     try:
-        existing = db.query(Document).filter_by(sha256=sha256).first()
-        if existing:
-            raise HTTPException(409, f"Document already exists (id={existing.id})")
+        doc = persist_upload(db, file.filename, data)
+        return serialize_document(doc)
+    finally:
+        db.close()
 
-        key = f"{sha256}.pdf"
-        put_object(key, data)
 
-        doc = Document(filename=file.filename, sha256=sha256, minio_key=key)
-        db.add(doc)
-        db.commit()
-        db.refresh(doc)
-        return {"id": doc.id, "filename": doc.filename, "sha256": sha256, "status": doc.status}
+@app.post("/documents/batch")
+async def upload_documents_batch(
+    user: Annotated[AuthUser, Depends(require_roles("uploader"))],
+    files: list[UploadFile] = File(...),
+):
+    results = []
+    db = SessionLocal()
+    try:
+        for file in files:
+            data = await file.read()
+            try:
+                doc = persist_upload(db, file.filename, data)
+                results.append({"filename": file.filename, "document": serialize_document(doc), "error": None})
+            except HTTPException as exc:
+                db.rollback()
+                detail = str(exc.detail)
+                duplicate_id = None
+                if exc.status_code == 409:
+                    raw_id = detail.split("id=")[-1].rstrip(")")
+                    duplicate_id = int(raw_id) if raw_id.isdigit() else None
+                results.append({"filename": file.filename, "document": None, "error": detail, "duplicate_id": duplicate_id})
+        return {"results": results}
     finally:
         db.close()
 
 
 @app.get("/documents")
-def list_documents():
+def list_documents(user: Annotated[AuthUser, Depends(get_current_user)]):
     db = SessionLocal()
     try:
         docs = db.query(Document).filter(Document.status != "rejected").order_by(Document.id.desc()).all()
@@ -299,8 +386,23 @@ def list_documents():
         db.close()
 
 
+@app.get("/review-queue")
+def review_queue(user: Annotated[AuthUser, Depends(require_roles("reviewer"))]):
+    db = SessionLocal()
+    try:
+        docs = (
+            db.query(Document)
+            .filter(Document.status.in_(["needs_review", "failed"]))
+            .order_by(Document.confidence_score.asc().nullsfirst(), Document.id.desc())
+            .all()
+        )
+        return [serialize_document(doc) for doc in docs]
+    finally:
+        db.close()
+
+
 @app.get("/documents/{doc_id}")
-def get_document(doc_id: int):
+def get_document(doc_id: int, user: Annotated[AuthUser, Depends(get_current_user)]):
     db = SessionLocal()
     try:
         doc = db.query(Document).filter_by(id=doc_id).first()
@@ -335,7 +437,12 @@ def get_document(doc_id: int):
 
 
 @app.patch("/documents/{doc_id}/transactions/{txn_id}")
-def update_transaction(doc_id: int, txn_id: int, payload: TransactionUpdate):
+def update_transaction(
+    doc_id: int,
+    txn_id: int,
+    payload: TransactionUpdate,
+    user: Annotated[AuthUser, Depends(require_roles("reviewer"))],
+):
     if payload.type not in {"deposit", "withdrawal"}:
         raise HTTPException(400, "Transaction type must be deposit or withdrawal")
 
@@ -375,7 +482,7 @@ def update_transaction(doc_id: int, txn_id: int, payload: TransactionUpdate):
 
 
 @app.post("/documents/{doc_id}/approve")
-def approve_document(doc_id: int):
+def approve_document(doc_id: int, user: Annotated[AuthUser, Depends(require_roles("reviewer"))]):
     db = SessionLocal()
     try:
         doc = db.query(Document).filter_by(id=doc_id).first()
@@ -397,7 +504,11 @@ def approve_document(doc_id: int):
 
 
 @app.post("/documents/{doc_id}/reject")
-def reject_document(doc_id: int, payload: RejectRequest | None = None):
+def reject_document(
+    doc_id: int,
+    user: Annotated[AuthUser, Depends(require_roles("reviewer"))],
+    payload: RejectRequest | None = None,
+):
     db = SessionLocal()
     try:
         doc = db.query(Document).filter_by(id=doc_id).first()
@@ -418,7 +529,11 @@ def reject_document(doc_id: int, payload: RejectRequest | None = None):
 
 
 @app.get("/documents/{doc_id}/file")
-def get_document_file(doc_id: int, range_header: str | None = Header(default=None, alias="Range")):
+def get_document_file(
+    doc_id: int,
+    user: Annotated[AuthUser, Depends(get_current_user)],
+    range_header: str | None = Header(default=None, alias="Range"),
+):
     db = SessionLocal()
     try:
         doc = db.query(Document).filter_by(id=doc_id).first()
@@ -463,7 +578,7 @@ def get_document_file(doc_id: int, range_header: str | None = Header(default=Non
 
 
 @app.post("/documents/{doc_id}/extract")
-def extract_document(doc_id: int):
+def extract_document(doc_id: int, user: Annotated[AuthUser, Depends(require_roles("uploader"))]):
     db = SessionLocal()
     try:
         doc = db.query(Document).filter_by(id=doc_id).first()
@@ -484,7 +599,7 @@ def extract_document(doc_id: int):
 
 
 @app.post("/documents/{doc_id}/parse")
-def parse_document(doc_id: int):
+def parse_document(doc_id: int, user: Annotated[AuthUser, Depends(require_roles("uploader"))]):
     db = SessionLocal()
     try:
         doc = db.query(Document).filter_by(id=doc_id).with_for_update().first()

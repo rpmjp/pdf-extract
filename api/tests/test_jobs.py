@@ -27,7 +27,7 @@ class FakeRedis:
         return True
 
 
-def test_parse_enqueues_job_and_reuses_active_job(client, db, monkeypatch):
+def test_parse_enqueues_job_and_reuses_active_job(client, db, auth_headers, monkeypatch):
     doc = create_document(db, filename="pytest-parse.pdf")
     task = FakeTask()
 
@@ -39,7 +39,7 @@ def test_parse_enqueues_job_and_reuses_active_job(client, db, monkeypatch):
     )
     monkeypatch.setattr(main, "celery_has_known_job", lambda job_id: True)
 
-    first = client.post(f"/documents/{doc.id}/parse")
+    first = client.post(f"/documents/{doc.id}/parse", headers=auth_headers)
 
     assert first.status_code == 202
     first_body = first.json()
@@ -52,7 +52,7 @@ def test_parse_enqueues_job_and_reuses_active_job(client, db, monkeypatch):
     assert doc.status == "queued"
     assert doc.current_job_id == first_body["job_id"]
 
-    second = client.post(f"/documents/{doc.id}/parse")
+    second = client.post(f"/documents/{doc.id}/parse", headers=auth_headers)
 
     assert second.status_code == 200
     assert second.json()["job_id"] == first_body["job_id"]
@@ -60,7 +60,7 @@ def test_parse_enqueues_job_and_reuses_active_job(client, db, monkeypatch):
     assert len(task.calls) == 1
 
 
-def test_parse_replaces_stale_pending_job(client, db, monkeypatch):
+def test_parse_replaces_stale_pending_job(client, db, auth_headers, monkeypatch):
     doc = create_document(
         db,
         filename="pytest-stale-pending.pdf",
@@ -77,7 +77,7 @@ def test_parse_replaces_stale_pending_job(client, db, monkeypatch):
     )
     monkeypatch.setattr(main, "broker_has_pending_job", lambda job_id: False)
 
-    response = client.post(f"/documents/{doc.id}/parse")
+    response = client.post(f"/documents/{doc.id}/parse", headers=auth_headers)
 
     assert response.status_code == 202
     assert response.json()["status"] == "queued"
@@ -85,7 +85,7 @@ def test_parse_replaces_stale_pending_job(client, db, monkeypatch):
     assert task.calls == [{"args": [doc.id], "task_id": response.json()["job_id"]}]
 
 
-def test_job_poll_recovers_orphaned_started_job(client, db, monkeypatch):
+def test_job_poll_recovers_orphaned_started_job(client, db, auth_headers, monkeypatch):
     doc = create_document(
         db,
         filename="pytest-orphaned.pdf",
@@ -103,7 +103,7 @@ def test_job_poll_recovers_orphaned_started_job(client, db, monkeypatch):
         lambda job_id, app=None: FakeAsyncResult(job_id, state="STARTED"),
     )
 
-    response = client.get("/jobs/orphan-job-id")
+    response = client.get("/jobs/orphan-job-id", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json() == {
@@ -118,7 +118,7 @@ def test_job_poll_recovers_orphaned_started_job(client, db, monkeypatch):
     assert doc.current_job_id == "orphan-job-id"
 
 
-def test_job_success_serializes_result(client, monkeypatch):
+def test_job_success_serializes_result(client, auth_headers, monkeypatch):
     result = {"id": 99, "status": "verified"}
     monkeypatch.setattr(
         main,
@@ -126,7 +126,7 @@ def test_job_success_serializes_result(client, monkeypatch):
         lambda job_id, app=None: FakeAsyncResult(job_id, state="SUCCESS", result=result),
     )
 
-    response = client.get("/jobs/success-job-id")
+    response = client.get("/jobs/success-job-id", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json() == {

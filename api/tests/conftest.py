@@ -19,6 +19,7 @@ os.environ.setdefault("MINIO_HOST", "localhost")
 os.environ.setdefault("MINIO_PORT", "9000")
 
 from app import main  # noqa: E402
+from app.auth import AuthUser, create_access_token  # noqa: E402
 from app.models import AuditLog, Document, ReviewItem, Transaction  # noqa: E402
 
 
@@ -43,6 +44,12 @@ def db():
         yield session
     finally:
         session.close()
+
+
+@pytest.fixture
+def auth_headers():
+    token = create_access_token(AuthUser(username="pytest-reviewer", roles=["reviewer", "uploader"]))
+    return {"Authorization": f"Bearer {token}"}
 
 
 def cleanup_pytest_rows():

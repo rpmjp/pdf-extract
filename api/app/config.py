@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     llm_backend: str = "ollama"
     llm_base_url: str = "http://host.docker.internal:11434/v1"
     llm_model: str = "qwen2.5vl:7b"
+    jwt_secret: str = "dev-secret-change-me"
+    access_token_minutes: int = 480
+    ocr_fallback_enabled: bool = False
 
     @property
     def minio_endpoint(self) -> str:
