@@ -24,10 +24,10 @@ def test_documents_return_priority_and_sort_p1_first(client, db, auth_headers):
     p3.confidence_score = 0.9
     db.commit()
 
-    response = client.get("/documents", headers=auth_headers)
+    response = client.get("/documents?q=pytest-priority&per_page=100", headers=auth_headers)
 
     assert response.status_code == 200
-    rows = [row for row in response.json() if row["id"] in {p1.id, p2.id, p3.id, none.id}]
+    rows = [row for row in response.json()["items"] if row["id"] in {p1.id, p2.id, p3.id, none.id}]
     assert [row["priority"] for row in rows] == ["P1", "P2", "P3", None]
 
 
@@ -43,7 +43,7 @@ def test_documents_priority_filter(client, db, auth_headers):
     response = client.get("/documents?priority=P1", headers=auth_headers)
 
     assert response.status_code == 200
-    ids = {row["id"] for row in response.json()}
+    ids = {row["id"] for row in response.json()["items"]}
     assert p1.id in ids
     assert p2.id not in ids
     assert p3.id not in ids

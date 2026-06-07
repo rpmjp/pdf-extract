@@ -20,7 +20,7 @@ os.environ.setdefault("MINIO_PORT", "9000")
 
 from app import main  # noqa: E402
 from app.auth import AuthUser, create_access_token  # noqa: E402
-from app.models import AuditLog, CorrectionExample, Document, DocumentVersion, EvalRun, EvalSetMember, ReviewItem, Transaction  # noqa: E402
+from app.models import AuditLog, CorrectionExample, Document, DocumentVersion, EvalRun, EvalSetMember, ParseJob, ReviewItem, Transaction  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -129,6 +129,7 @@ __all__ = [
     "DocumentVersion",
     "EvalRun",
     "EvalSetMember",
+    "ParseJob",
     "ReviewItem",
     "Transaction",
     "add_statement_fields",

@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel
-from sqlalchemy import case, create_engine, inspect, text
+from sqlalchemy import case, create_engine, inspect, or_, text
 from sqlalchemy.orm import sessionmaker
 import redis
 
@@ -77,6 +77,12 @@ class BatchUploadResult(BaseModel):
     document: dict | None = None
     error: str | None = None
     duplicate_id: int | None = None
+
+
+class BulkDocumentsRequest(BaseModel):
+    action: str
+    document_ids: list[int]
+    reason: str | None = None
 
 
 ACTIVE_JOB_STATES = {"PENDING", "RECEIVED", "STARTED", "RETRY"}
@@ -449,49 +455,109 @@ def priority_sort_expr():
     )
 
 
+SORT_FIELDS = {
+    "id": Document.id,
+    "filename": Document.filename,
+    "account_holder": Document.account_holder,
+    "priority": priority_sort_expr(),
+    "status": Document.status,
+    "confidence_score": Document.confidence_score,
+    "created_at": Document.created_at,
+}
+
+
+def apply_document_filters(query, *, q: str | None = None, filter_value: str | None = None, priority: str | None = None):
+    if q:
+        pattern = f"%{q.strip()}%"
+        query = query.filter(or_(Document.filename.ilike(pattern), Document.account_holder.ilike(pattern)))
+    if filter_value == "needs_review":
+        query = query.filter(Document.status.in_(["needs_review", "failed"]))
+    elif filter_value == "processing":
+        query = query.filter(Document.status.in_(["queued", "parsing"]))
+    elif filter_value:
+        raise HTTPException(400, "filter must be needs_review or processing")
+    if priority == "P1":
+        query = query.filter((Document.status == "failed") | ((Document.status == "needs_review") & (Document.confidence_score < 0.6)))
+    elif priority == "P2":
+        query = query.filter((Document.status == "needs_review") & ((Document.confidence_score == None) | (Document.confidence_score >= 0.6)))  # noqa: E711
+    elif priority == "P3":
+        query = query.filter(Document.status.in_(["verified", "approved"]))
+    elif priority is not None:
+        raise HTTPException(400, "priority must be P1, P2, or P3")
+    return query
+
+
+def apply_document_sort(query, *, sort: str | None = None, order: str | None = None):
+    if sort is None:
+        return query.order_by(priority_sort_expr().asc(), Document.created_at.desc())
+    if sort not in SORT_FIELDS:
+        raise HTTPException(400, "unsupported sort field")
+    if order not in {"asc", "desc"}:
+        raise HTTPException(400, "order must be asc or desc")
+    column = SORT_FIELDS[sort]
+    return query.order_by(column.asc() if order == "asc" else column.desc(), Document.created_at.desc())
+
+
+def paginate_documents(query, *, page: int = 1, per_page: int = 25, serializer=serialize_document):
+    if page < 1:
+        raise HTTPException(400, "page must be >= 1")
+    if per_page not in {25, 50, 100}:
+        raise HTTPException(400, "per_page must be 25, 50, or 100")
+    total = query.order_by(None).count()
+    items = query.offset((page - 1) * per_page).limit(per_page).all()
+    return {
+        "items": [serializer(item) for item in items],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+    }
+
+
 @app.get("/documents")
 def list_documents(
     user: Annotated[AuthUser, Depends(get_current_user)],
     priority: str | None = None,
+    filter: str | None = None,
+    q: str | None = None,
+    sort: str | None = None,
+    order: str | None = None,
+    page: int = 1,
+    per_page: int = 25,
 ):
-    if priority is not None and priority not in {"P1", "P2", "P3"}:
-        raise HTTPException(400, "priority must be P1, P2, or P3")
     db = SessionLocal()
     try:
         query = db.query(Document).filter(Document.status != "rejected")
-        if priority == "P1":
-            query = query.filter((Document.status == "failed") | ((Document.status == "needs_review") & (Document.confidence_score < 0.6)))
-        elif priority == "P2":
-            query = query.filter((Document.status == "needs_review") & ((Document.confidence_score == None) | (Document.confidence_score >= 0.6)))  # noqa: E711
-        elif priority == "P3":
-            query = query.filter(Document.status.in_(["verified", "approved"]))
-        docs = query.order_by(priority_sort_expr().asc(), Document.created_at.desc()).all()
-        return [serialize_document(d) for d in docs]
+        query = apply_document_filters(query, q=q, filter_value=filter, priority=priority)
+        query = apply_document_sort(query, sort=sort, order=order)
+        return paginate_documents(query, page=page, per_page=per_page)
     finally:
         db.close()
 
 
 @app.get("/review-queue")
-def review_queue(user: Annotated[AuthUser, Depends(require_roles("reviewer"))]):
+def review_queue(
+    user: Annotated[AuthUser, Depends(require_roles("reviewer"))],
+    q: str | None = None,
+    sort: str | None = None,
+    order: str | None = None,
+    page: int = 1,
+    per_page: int = 25,
+):
     db = SessionLocal()
     try:
-        docs = (
-            db.query(Document)
-            .filter(Document.status.in_(["needs_review", "failed"]))
-            .order_by(Document.confidence_score.asc().nullsfirst(), Document.id.desc())
-            .all()
-        )
-        rows = []
-        for doc in docs:
+        query = db.query(Document).filter(Document.status.in_(["needs_review", "failed"]))
+        query = apply_document_filters(query, q=q)
+        query = apply_document_sort(query, sort=sort, order=order)
+
+        def serialize_review_doc(doc: Document):
             review_items = db.query(ReviewItem).filter_by(document_id=doc.id, status="open").order_by(ReviewItem.id).all()
-            rows.append(
-                {
-                    **serialize_document(doc),
-                    "review_item_count": len(review_items),
-                    "first_review_reason": review_items[0].reason if review_items else None,
-                }
-            )
-        return rows
+            return {
+                **serialize_document(doc),
+                "review_item_count": len(review_items),
+                "first_review_reason": review_items[0].reason if review_items else None,
+            }
+
+        return paginate_documents(query, page=page, per_page=per_page, serializer=serialize_review_doc)
     finally:
         db.close()
 
@@ -710,6 +776,87 @@ def reject_document(
         db.close()
 
 
+def enqueue_parse_for_document(db, doc: Document):
+    if doc.current_job_id:
+        existing = AsyncResult(doc.current_job_id, app=celery_app)
+        if existing.state == "PENDING" and broker_has_pending_job(doc.current_job_id):
+            return serialize_job(doc.current_job_id), False
+        if existing.state in ACTIVE_JOB_STATES - {"PENDING"}:
+            return serialize_job(doc.current_job_id), False
+        doc.current_job_id = None
+
+    job_id = str(uuid.uuid4())
+    doc.status = "queued"
+    doc.current_job_id = job_id
+    db.add(ParseJob(id=job_id, document_id=doc.id, status="queued", retry_count=0))
+    db.commit()
+    parse_document_task.apply_async(args=[doc.id], task_id=job_id)
+    return {"job_id": job_id, "status": "queued"}, True
+
+
+@app.post("/documents/bulk")
+def bulk_documents(payload: BulkDocumentsRequest, user: Annotated[AuthUser, Depends(get_current_user)]):
+    if payload.action not in {"reparse", "approve", "reject"}:
+        raise HTTPException(400, "action must be reparse, approve, or reject")
+    if payload.action == "reparse" and "uploader" not in user.roles:
+        raise HTTPException(403, "Uploader role required")
+    if payload.action in {"approve", "reject"} and "reviewer" not in user.roles:
+        raise HTTPException(403, "Reviewer role required")
+
+    succeeded: list[int] = []
+    failed: list[dict] = []
+    db = SessionLocal()
+    try:
+        for doc_id in payload.document_ids:
+            try:
+                doc = db.query(Document).filter_by(id=doc_id).with_for_update().first()
+                if not doc:
+                    raise ValueError("Document not found")
+                if payload.action == "reparse":
+                    if doc.status in {"queued", "parsing"}:
+                        raise ValueError("Document is already processing")
+                    enqueue_parse_for_document(db, doc)
+                elif payload.action == "approve":
+                    if doc.status != "verified":
+                        raise ValueError("Only verified documents can be bulk approved")
+                    previous_status = doc.status
+                    doc.status = "approved"
+                    review_items = db.query(ReviewItem).filter_by(document_id=doc.id, status="open").all()
+                    for item in review_items:
+                        item.status = "closed"
+                    correction_example = create_correction_example_for_document(db, doc, user.username)
+                    add_audit(
+                        db,
+                        doc.id,
+                        "approve",
+                        {
+                            "previous_status": previous_status,
+                            "closed_review_items": [item.id for item in review_items],
+                            "bulk": True,
+                        },
+                        user.username,
+                    )
+                    if correction_example:
+                        add_audit(db, doc.id, "approve_learning", {"correction_example_id": correction_example.id, "bulk": True}, user.username)
+                    db.commit()
+                elif payload.action == "reject":
+                    if doc.status not in {"needs_review", "failed"}:
+                        raise ValueError("Only needs_review or failed documents can be bulk rejected")
+                    previous_status = doc.status
+                    doc.status = "rejected"
+                    reason = payload.reason or "Rejected by reviewer"
+                    db.add(ReviewItem(document_id=doc.id, reason=reason, status="closed"))
+                    add_audit(db, doc.id, "reject", {"previous_status": previous_status, "reason": reason, "bulk": True}, user.username)
+                    db.commit()
+                succeeded.append(doc_id)
+            except Exception as exc:
+                db.rollback()
+                failed.append({"id": doc_id, "error": str(exc)})
+        return {"succeeded": succeeded, "failed": failed}
+    finally:
+        db.close()
+
+
 @app.get("/documents/{doc_id}/file")
 def get_document_file(
     doc_id: int,
@@ -788,21 +935,9 @@ def parse_document(doc_id: int, user: Annotated[AuthUser, Depends(require_roles(
         if not doc:
             raise HTTPException(404, "Document not found")
 
-        if doc.current_job_id:
-            existing = AsyncResult(doc.current_job_id, app=celery_app)
-            if existing.state == "PENDING" and broker_has_pending_job(doc.current_job_id):
-                return serialize_job(doc.current_job_id)
-            if existing.state in ACTIVE_JOB_STATES - {"PENDING"}:
-                return serialize_job(doc.current_job_id)
-            doc.current_job_id = None
-
-        job_id = str(uuid.uuid4())
-        doc.status = "queued"
-        doc.current_job_id = job_id
-        db.add(ParseJob(id=job_id, document_id=doc.id, status="queued", retry_count=0))
-        db.commit()
-
-        parse_document_task.apply_async(args=[doc.id], task_id=job_id)
-        return JSONResponse({"job_id": job_id, "status": "queued"}, status_code=status.HTTP_202_ACCEPTED)
+        body, created = enqueue_parse_for_document(db, doc)
+        if created:
+            return JSONResponse(body, status_code=status.HTTP_202_ACCEPTED)
+        return body
     finally:
         db.close()

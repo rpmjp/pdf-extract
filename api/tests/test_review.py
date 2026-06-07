@@ -84,7 +84,7 @@ def test_reject_hides_document_from_dashboard(client, db, auth_headers):
     assert db.query(AuditLog).filter_by(document_id=doc.id, action="reject").count() == 1
 
     dashboard = client.get("/documents", headers=auth_headers)
-    assert doc.id not in {row["id"] for row in dashboard.json()}
+    assert doc.id not in {row["id"] for row in dashboard.json()["items"]}
 
 
 def test_review_queue_sorts_lowest_confidence_first(client, db, auth_headers):
@@ -94,8 +94,8 @@ def test_review_queue_sorts_lowest_confidence_first(client, db, auth_headers):
     high.confidence_score = 0.88
     db.commit()
 
-    response = client.get("/review-queue", headers=auth_headers)
+    response = client.get("/review-queue?sort=confidence_score&order=asc", headers=auth_headers)
 
     assert response.status_code == 200
-    ids = [row["id"] for row in response.json()]
+    ids = [row["id"] for row in response.json()["items"]]
     assert ids.index(low.id) < ids.index(high.id)

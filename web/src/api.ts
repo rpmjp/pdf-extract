@@ -62,6 +62,18 @@ export interface Document {
   first_review_reason?: string | null;
 }
 
+export interface PaginatedDocumentsResponse {
+  items: Document[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface BulkDocumentsResponse {
+  succeeded: number[];
+  failed: { id: number; error: string }[];
+}
+
 export interface Transaction {
   id?: number;
   date: string;
