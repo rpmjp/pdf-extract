@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, type Document } from "../api";
 import ConfidenceMeter, { formatConfidence } from "../components/ConfidenceMeter";
-import StatusBadge from "../components/StatusBadge";
+import StatusBadge, { PriorityBadge } from "../components/StatusBadge";
 
 function formatDate(value?: string) {
   if (!value) return "—";
@@ -28,15 +28,6 @@ function StatCard({ label, value, tone = "slate" }: { label: string; value: stri
       <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
     </div>
   );
-}
-
-function priorityLabel(doc: Document) {
-  if (doc.first_review_reason) return doc.first_review_reason;
-  if (doc.status === "failed") return "Worker failed";
-  if (doc.status === "queued" || doc.status === "parsing") return "Processing";
-  if (doc.status === "needs_review") return doc.review_item_count ? `${doc.review_item_count} review item${doc.review_item_count === 1 ? "" : "s"}` : "Review required";
-  if (typeof doc.confidence_score === "number" && doc.confidence_score < 0.75) return "Low confidence";
-  return doc.account_holder || "Ready";
 }
 
 export default function Dashboard({ mode = "documents" }: { mode?: "documents" | "review" }) {
@@ -101,8 +92,8 @@ export default function Dashboard({ mode = "documents" }: { mode?: "documents" |
                   <p className="font-medium text-slate-800">{d.account_holder || "—"}</p>
                   <p className="mt-0.5 text-xs text-slate-500">{d.account_number || d.statement_period || "No account details yet"}</p>
                 </td>
-                <td className="max-w-sm px-4 py-3 text-slate-600">
-                  <p className="line-clamp-2">{priorityLabel(d)}</p>
+                <td className="px-4 py-3">
+                  <PriorityBadge priority={d.priority} />
                 </td>
                 <td className="px-4 py-3"><StatusBadge status={d.status} /></td>
                 <td className="px-4 py-3 text-right">

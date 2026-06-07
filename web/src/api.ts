@@ -57,6 +57,7 @@ export interface Document {
   opening_balance?: number | null;
   closing_balance?: number | null;
   confidence_score?: number | null;
+  priority?: "P1" | "P2" | "P3" | null;
   review_item_count?: number;
   first_review_reason?: string | null;
 }

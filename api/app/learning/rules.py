@@ -4,7 +4,7 @@ import re
 from copy import deepcopy
 from typing import Any
 
-from app.schemas import StatementExtraction
+from ..schemas import StatementExtraction
 
 
 def _amount_patterns(amount: float) -> list[str]:

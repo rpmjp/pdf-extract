@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 
-from app.config import settings
-from app.models import CorrectionExample, EvalSetMember
+from ..config import settings
+from ..models import CorrectionExample, EvalSetMember
 
 
 engine = create_engine(settings.database_url, pool_pre_ping=True)

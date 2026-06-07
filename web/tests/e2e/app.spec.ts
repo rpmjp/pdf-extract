@@ -18,11 +18,47 @@ async function mockApi(page: Page, roles = ["reviewer", "uploader"]) {
       await route.fulfill({
         json: [
           {
+            id: 10,
+            filename: "statement_failed.pdf",
+            status: "failed",
+            sha256: "def",
+            confidence_score: 0.2,
+            priority: "P1",
+            account_holder: "Failed Holder",
+            account_number: "****0001",
+            created_at: "2026-01-02T00:00:00Z",
+          },
+          {
             id: 9,
             filename: "statement_noisy.pdf",
             status: "needs_review",
             sha256: "abc",
             confidence_score: 0.42,
+            priority: "P1",
+            account_holder: "Noisy Holder",
+            account_number: "****0002",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: 8,
+            filename: "statement_medium.pdf",
+            status: "needs_review",
+            sha256: "ghi",
+            confidence_score: 0.72,
+            priority: "P2",
+            account_holder: "Medium Holder",
+            account_number: "****0003",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: 7,
+            filename: "statement_verified.pdf",
+            status: "verified",
+            sha256: "jkl",
+            confidence_score: 0.94,
+            priority: "P3",
+            account_holder: "Verified Holder",
+            account_number: "****0004",
             created_at: "2026-01-01T00:00:00Z",
           },
         ],
@@ -77,6 +113,21 @@ test("login shows dashboard documents", async ({ page }) => {
   const row = page.getByRole("row", { name: /statement_noisy\.pdf/ });
   await expect(row).toBeVisible();
   await expect(row.getByText("42%")).toBeVisible();
+});
+
+test("dashboard renders backend priority pills", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  const failed = page.getByRole("row", { name: /statement_failed\.pdf/ });
+  const medium = page.getByRole("row", { name: /statement_medium\.pdf/ });
+  const verified = page.getByRole("row", { name: /statement_verified\.pdf/ });
+
+  await expect(failed.getByText("P1")).toBeVisible();
+  await expect(medium.getByText("P2")).toBeVisible();
+  await expect(verified.getByText("P3")).toBeVisible();
+  await expect(failed.getByRole("cell").nth(2)).not.toContainText("Failed Holder");
 });
 
 test("review queue routes to reviewer worklist", async ({ page }) => {

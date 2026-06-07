@@ -6,10 +6,10 @@ from typing import Any
 
 import fitz
 
-from app.extract import classify_and_extract
-from app.learning.categorize import categorize_failure
-from app.models import AuditLog, CorrectionExample, Document, DocumentVersion, Transaction
-from app.storage import get_object
+from ..extract import classify_and_extract
+from ..learning.categorize import categorize_failure
+from ..models import AuditLog, CorrectionExample, Document, DocumentVersion, Transaction
+from ..storage import get_object
 
 
 DOC_FIELDS = ["account_holder", "account_number", "statement_period", "opening_balance", "closing_balance"]

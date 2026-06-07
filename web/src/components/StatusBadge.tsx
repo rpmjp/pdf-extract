@@ -11,6 +11,12 @@ const statusStyles: Record<string, string> = {
   uploaded: "bg-slate-100 text-slate-700 ring-slate-200",
 };
 
+const priorityStyles: Record<string, string> = {
+  P1: "bg-rose-100 text-rose-700 ring-rose-200",
+  P2: "bg-amber-100 text-amber-800 ring-amber-200",
+  P3: "bg-slate-100 text-slate-700 ring-slate-200",
+};
+
 const statusLabels: Record<string, string> = {
   needs_review: "Needs review",
   extracted_digital: "Extracted",
@@ -29,6 +35,15 @@ export default function StatusBadge({ status, pulse = false }: { status: DocStat
     <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium capitalize ring-1 ring-inset ${cls}`}>
       {shouldPulse && <span className="mr-1.5 h-1.5 w-1.5 animate-pulse rounded-full bg-current" />}
       {formatStatus(status)}
+    </span>
+  );
+}
+
+export function PriorityBadge({ priority }: { priority?: "P1" | "P2" | "P3" | null }) {
+  if (!priority) return <span className="text-slate-400">—</span>;
+  return (
+    <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${priorityStyles[priority]}`}>
+      {priority}
     </span>
   );
 }

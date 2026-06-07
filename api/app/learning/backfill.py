@@ -6,9 +6,9 @@ import json
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.config import settings
-from app.learning.examples import create_correction_example_for_document
-from app.models import CorrectionExample, Document
+from ..config import settings
+from ..learning.examples import create_correction_example_for_document
+from ..models import CorrectionExample, Document
 
 
 engine = create_engine(settings.database_url, pool_pre_ping=True)

@@ -6,8 +6,8 @@ import json
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.config import settings
-from app.models import EvalRun
+from ..config import settings
+from ..models import EvalRun
 
 
 engine = create_engine(settings.database_url, pool_pre_ping=True)

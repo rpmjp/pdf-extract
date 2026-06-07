@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.learning.examples import extraction_from_version
-from app.models import CorrectionExample, DocumentVersion
+from ..learning.examples import extraction_from_version
+from ..models import CorrectionExample, DocumentVersion
 
 
 def estimate_tokens(text: str) -> int:

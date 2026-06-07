@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
 from pydantic import BaseModel
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import case, create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 import redis
 
@@ -20,6 +20,7 @@ from .auth import AuthUser, LoginRequest, authenticate, configure_auth, create_a
 from .config import settings
 from .learning.examples import create_correction_example_for_document
 from .models import AuditLog, CorrectionExample, Document, DocumentVersion, ParseJob, Transaction, ReviewItem
+from .priority import compute_priority
 from .storage import ensure_bucket, put_object, get_object
 from .extract import classify_and_extract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
@@ -212,6 +213,7 @@ def serialize_document(doc: Document) -> dict:
         "opening_balance": float(doc.opening_balance) if doc.opening_balance is not None else None,
         "closing_balance": float(doc.closing_balance) if doc.closing_balance is not None else None,
         "confidence_score": float(doc.confidence_score) if doc.confidence_score is not None else None,
+        "priority": compute_priority(doc.status, doc.confidence_score),
     }
 
 
@@ -437,11 +439,33 @@ async def upload_documents_batch(
         db.close()
 
 
+def priority_sort_expr():
+    return case(
+        (Document.status == "failed", 1),
+        ((Document.status == "needs_review") & (Document.confidence_score < 0.6), 1),
+        (Document.status == "needs_review", 2),
+        (Document.status.in_(["verified", "approved"]), 3),
+        else_=4,
+    )
+
+
 @app.get("/documents")
-def list_documents(user: Annotated[AuthUser, Depends(get_current_user)]):
+def list_documents(
+    user: Annotated[AuthUser, Depends(get_current_user)],
+    priority: str | None = None,
+):
+    if priority is not None and priority not in {"P1", "P2", "P3"}:
+        raise HTTPException(400, "priority must be P1, P2, or P3")
     db = SessionLocal()
     try:
-        docs = db.query(Document).filter(Document.status != "rejected").order_by(Document.id.desc()).all()
+        query = db.query(Document).filter(Document.status != "rejected")
+        if priority == "P1":
+            query = query.filter((Document.status == "failed") | ((Document.status == "needs_review") & (Document.confidence_score < 0.6)))
+        elif priority == "P2":
+            query = query.filter((Document.status == "needs_review") & ((Document.confidence_score == None) | (Document.confidence_score >= 0.6)))  # noqa: E711
+        elif priority == "P3":
+            query = query.filter(Document.status.in_(["verified", "approved"]))
+        docs = query.order_by(priority_sort_expr().asc(), Document.created_at.desc()).all()
         return [serialize_document(d) for d in docs]
     finally:
         db.close()
