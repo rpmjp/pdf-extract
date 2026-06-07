@@ -4,13 +4,24 @@ const baseURL = import.meta.env.VITE_API_URL || "http://localhost:8003";
 
 export const api = axios.create({ baseURL });
 
-export type DocStatus = "uploaded" | "extracted:digital" | "extracted:scanned" | "verified" | "needs_review" | "approved" | "rejected";
+export type DocStatus =
+  | "uploaded"
+  | "queued"
+  | "parsing"
+  | "failed"
+  | "extracted:digital"
+  | "extracted:scanned"
+  | "verified"
+  | "needs_review"
+  | "approved"
+  | "rejected";
 
 export interface Document {
   id: number;
   filename: string;
   sha256: string;
   status: DocStatus;
+  current_job_id?: string | null;
   created_at?: string;
   account_holder?: string | null;
   account_number?: string | null;
@@ -57,6 +68,17 @@ export interface ParseResponse {
   };
   extraction: Extraction;
 }
+
+export type JobStatus = "queued" | "started" | "success" | "failed" | "retrying";
+
+export interface JobResponse {
+  job_id: string;
+  status: JobStatus;
+  result?: ParseResponse;
+  error?: string;
+}
+
+export type ParseJob = JobResponse;
 
 export interface ReviewItem {
   id: number;

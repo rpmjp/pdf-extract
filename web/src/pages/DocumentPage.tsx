@@ -14,6 +14,9 @@ function StatusBadge({ status }: { status: string }) {
     verified: "bg-emerald-100 text-emerald-700",
     approved: "bg-emerald-100 text-emerald-700",
     needs_review: "bg-amber-100 text-amber-700",
+    queued: "bg-sky-100 text-sky-700",
+    parsing: "bg-sky-100 text-sky-700",
+    failed: "bg-rose-100 text-rose-700",
     rejected: "bg-rose-100 text-rose-700",
     uploaded: "bg-slate-100 text-slate-700",
   };
@@ -30,12 +33,18 @@ export default function DocumentPage() {
     queryKey: ["document", id],
     queryFn: async () => (await api.get<DocumentDetail>(`/documents/${id}`)).data,
     enabled: Boolean(id),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "queued" || status === "parsing" ? 2000 : false;
+    },
   });
 
   if (isLoading) return <p className="text-slate-500">Loading...</p>;
   if (error || !data || !id) return <p className="text-rose-600">Failed to load document.</p>;
 
   const pdfUrl = `${api.defaults.baseURL}/documents/${id}/file`;
+  const isProcessing = data.status === "queued" || data.status === "parsing";
+  const hasFailed = data.status === "failed";
 
   return (
     <div className="flex h-[calc(100vh-8rem)] min-h-[720px] flex-col">
@@ -68,8 +77,24 @@ export default function DocumentPage() {
         <PdfViewer url={pdfUrl} />
 
         <div className="min-h-0 space-y-5 overflow-y-auto pr-1">
-          <AccountCard document={data} />
-          <ReconciliationPanel reconciliation={data.reconciliation} />
+          {isProcessing ? (
+            <section className="rounded-lg border border-sky-200 bg-sky-50 p-5 text-sky-900">
+              <h2 className="font-semibold">Parsing in progress</h2>
+              <p className="mt-2 text-sm">
+                This document is {data.status === "queued" ? "waiting for the worker" : "being extracted"}. The parsed fields will appear here when the job finishes.
+              </p>
+            </section>
+          ) : hasFailed ? (
+            <section className="rounded-lg border border-rose-200 bg-rose-50 p-5 text-rose-900">
+              <h2 className="font-semibold">Parse failed</h2>
+              <p className="mt-2 text-sm">The worker could not finish this document. Review items below may include the error.</p>
+            </section>
+          ) : (
+            <>
+              <AccountCard document={data} />
+              <ReconciliationPanel reconciliation={data.reconciliation} />
+            </>
+          )}
 
           {data.review_items.length > 0 && (
             <section className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
@@ -82,7 +107,9 @@ export default function DocumentPage() {
             </section>
           )}
 
-          {isEditing ? (
+          {isProcessing || hasFailed ? (
+            <AuditLog entries={data.audit_log} />
+          ) : isEditing ? (
             <>
               <EditableTransactionsTable documentId={data.id} transactions={data.transactions} />
               <ReviewControls documentId={data.id} />

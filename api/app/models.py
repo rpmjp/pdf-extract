@@ -16,6 +16,7 @@ class Document(Base):
     sha256: Mapped[str] = mapped_column(String(64), unique=True)
     minio_key: Mapped[str] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(32), default="uploaded")
+    current_job_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     account_holder: Mapped[str | None] = mapped_column(String(255), nullable=True)
     account_number: Mapped[str | None] = mapped_column(String(64), nullable=True)
     statement_period: Mapped[str | None] = mapped_column(String(128), nullable=True)

@@ -4,7 +4,11 @@ import type { ParseResponse } from "../api";
 function StatusBadge({ status }: { status: string }) {
   const styles: Record<string, string> = {
     verified: "bg-emerald-100 text-emerald-700",
+    approved: "bg-emerald-100 text-emerald-700",
     needs_review: "bg-amber-100 text-amber-700",
+    queued: "bg-sky-100 text-sky-700",
+    parsing: "bg-sky-100 text-sky-700",
+    failed: "bg-rose-100 text-rose-700",
     uploaded: "bg-slate-100 text-slate-700",
   };
   const cls = styles[status] || "bg-slate-100 text-slate-700";

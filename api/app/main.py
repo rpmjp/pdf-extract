@@ -1,6 +1,9 @@
 import hashlib
-from fastapi import FastAPI, UploadFile, File, HTTPException, Response, Header
+import uuid
+from celery.result import AsyncResult
+from fastapi import FastAPI, UploadFile, File, HTTPException, Response, Header, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -13,6 +16,7 @@ from .extract import classify_and_extract, render_pages_to_images
 from .llm import extract_statement, extract_statement_from_images
 from .reconcile import reconcile, correct_signs_from_balances
 from .schemas import StatementExtraction, Transaction as TransactionSchema
+from .worker import celery_app, parse_document_task
 
 app = FastAPI(title="PDF Extract API")
 app.add_middleware(
@@ -39,11 +43,106 @@ class RejectRequest(BaseModel):
     reason: str | None = None
 
 
+ACTIVE_JOB_STATES = {"PENDING", "RECEIVED", "STARTED", "RETRY"}
+RECOVERABLE_DOCUMENT_STATES = {"queued", "parsing"}
+JOB_RECOVERY_LOCK_SECONDS = 30
+
+
+def broker_has_pending_job(job_id: str) -> bool:
+    client = redis.Redis(host=settings.redis_host, port=settings.redis_port, db=0)
+    job_id_bytes = job_id.encode()
+    for message in client.lrange("celery", 0, -1):
+        if job_id_bytes in message:
+            return True
+    return False
+
+
+def celery_inspect_has_job(job_id: str) -> bool:
+    inspector = celery_app.control.inspect(timeout=1)
+
+    def task_matches(task: dict) -> bool:
+        request = task.get("request", task)
+        return task.get("id") == job_id or request.get("id") == job_id
+
+    for get_tasks in (inspector.active, inspector.reserved, inspector.scheduled):
+        try:
+            workers = get_tasks() or {}
+        except Exception:
+            continue
+
+        for tasks in workers.values():
+            if any(task_matches(task) for task in tasks):
+                return True
+
+    return False
+
+
+def celery_has_known_job(job_id: str) -> bool:
+    return broker_has_pending_job(job_id) or celery_inspect_has_job(job_id)
+
+
+def recover_orphaned_job(job_id: str) -> bool:
+    if celery_has_known_job(job_id):
+        return False
+
+    db = SessionLocal()
+    try:
+        doc = db.query(Document).filter_by(current_job_id=job_id).first()
+        if not doc or doc.status not in RECOVERABLE_DOCUMENT_STATES:
+            return False
+
+        client = redis.Redis(host=settings.redis_host, port=settings.redis_port, db=0)
+        lock_key = f"job-recovery:{job_id}"
+        if not client.set(lock_key, "1", nx=True, ex=JOB_RECOVERY_LOCK_SECONDS):
+            return True
+
+        doc.status = "queued"
+        db.commit()
+        parse_document_task.apply_async(args=[doc.id], task_id=job_id)
+        return True
+    finally:
+        db.close()
+
+
+def serialize_job(job_id: str) -> dict:
+    result = AsyncResult(job_id, app=celery_app)
+    state = result.state
+    recovered = False
+    if state == "STARTED" and recover_orphaned_job(job_id):
+        state = "PENDING"
+        recovered = True
+    elif state == "PENDING" and not broker_has_pending_job(job_id) and recover_orphaned_job(job_id):
+        recovered = True
+
+    if state in {"PENDING", "RECEIVED"}:
+        status = "queued"
+    elif state == "STARTED":
+        status = "started"
+    elif state == "RETRY":
+        status = "retrying"
+    elif state == "SUCCESS":
+        status = "success"
+    elif state == "FAILURE":
+        status = "failed"
+    else:
+        status = state.lower()
+
+    payload = {"job_id": job_id, "status": status}
+    if recovered:
+        payload["recovered"] = True
+    if state == "SUCCESS":
+        payload["result"] = result.result
+    elif state == "FAILURE":
+        payload["error"] = str(result.result)
+    return payload
+
+
 def serialize_document(doc: Document) -> dict:
     return {
         "id": doc.id,
         "filename": doc.filename,
         "status": doc.status,
+        "current_job_id": doc.current_job_id,
         "sha256": doc.sha256,
         "created_at": doc.created_at.isoformat(),
         "account_holder": doc.account_holder,
@@ -150,6 +249,11 @@ def health_deps():
     return deps
 
 
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    return serialize_job(job_id)
+
+
 @app.post("/documents")
 async def upload_document(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
@@ -237,7 +341,7 @@ def update_transaction(doc_id: int, txn_id: int, payload: TransactionUpdate):
 
     db = SessionLocal()
     try:
-        doc = db.query(Document).filter_by(id=doc_id).first()
+        doc = db.query(Document).filter_by(id=doc_id).with_for_update().first()
         if not doc:
             raise HTTPException(404, "Document not found")
 
@@ -383,50 +487,24 @@ def extract_document(doc_id: int):
 def parse_document(doc_id: int):
     db = SessionLocal()
     try:
-        doc = db.query(Document).filter_by(id=doc_id).first()
+        doc = db.query(Document).filter_by(id=doc_id).with_for_update().first()
         if not doc:
             raise HTTPException(404, "Document not found")
-        pdf_bytes = get_object(doc.minio_key)
-        extracted = classify_and_extract(pdf_bytes)
-        if extracted["kind"] == "digital":
-            text = "\n\n".join(p["text"] for p in extracted["pages"])
-            result = extract_statement(text)
-        else:
-            images = render_pages_to_images(pdf_bytes)
-            result = extract_statement_from_images(images)
-        corrections = correct_signs_from_balances(result)
-        recon = reconcile(result)
-        recon["sign_corrections"] = corrections
-        doc.status = "verified" if recon["passed"] else "needs_review"
-        doc.account_holder = result.account_holder
-        doc.account_number = result.account_number
-        doc.statement_period = result.statement_period
-        doc.opening_balance = result.opening_balance
-        doc.closing_balance = result.closing_balance
 
-        db.query(Transaction).filter_by(document_id=doc.id).delete()
-        db.query(ReviewItem).filter_by(document_id=doc.id).delete()
+        if doc.current_job_id:
+            existing = AsyncResult(doc.current_job_id, app=celery_app)
+            if existing.state == "PENDING" and broker_has_pending_job(doc.current_job_id):
+                return serialize_job(doc.current_job_id)
+            if existing.state in ACTIVE_JOB_STATES - {"PENDING"}:
+                return serialize_job(doc.current_job_id)
+            doc.current_job_id = None
 
-        for t in result.transactions:
-            db.add(Transaction(
-                document_id=doc.id,
-                txn_date=t.date,
-                description=t.description,
-                amount=t.amount,
-                type=t.type,
-                balance=t.balance,
-            ))
-
-        if not recon["passed"]:
-            failed = [c["detail"] for c in recon["checks"] if not c["passed"]]
-            db.add(ReviewItem(document_id=doc.id, reason="; ".join(failed)))
-
+        job_id = str(uuid.uuid4())
+        doc.status = "queued"
+        doc.current_job_id = job_id
         db.commit()
-        return {
-            "id": doc.id,
-            "status": doc.status,
-            "reconciliation": recon,
-            "extraction": result.model_dump(),
-        }
+
+        parse_document_task.apply_async(args=[doc.id], task_id=job_id)
+        return JSONResponse({"job_id": job_id, "status": "queued"}, status_code=status.HTTP_202_ACCEPTED)
     finally:
         db.close()

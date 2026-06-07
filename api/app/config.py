@@ -33,5 +33,13 @@ class Settings(BaseSettings):
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
 
+    @property
+    def redis_url(self) -> str:
+        return f"redis://{self.redis_host}:{self.redis_port}/0"
+
+    @property
+    def redis_result_url(self) -> str:
+        return f"redis://{self.redis_host}:{self.redis_port}/1"
+
 
 settings = Settings()

@@ -1,16 +1,17 @@
 import axios from "axios";
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import Dropzone from "../components/Dropzone";
 import UploadResult from "../components/UploadResult";
-import { api, type Document, type ParseResponse } from "../api";
+import { api, type Document, type JobResponse, type ParseResponse } from "../api";
 
 type UploadStage =
   | { stage: "idle" }
   | { stage: "selected"; file: File }
   | { stage: "uploading"; file: File }
-  | { stage: "parsing"; file: File; document: Document }
+  | { stage: "queued"; file: File; document: Document; jobId: string }
+  | { stage: "parsing"; file: File; document: Document; jobId: string }
   | { stage: "done"; file: File; document: Document; result: ParseResponse }
   | { stage: "error"; message: string; file?: File; duplicateId?: number };
 
@@ -60,21 +61,36 @@ export default function UploadPage() {
     },
   });
 
-  const parse = useMutation({
-    mutationFn: (id: number) => api.post<ParseResponse>(`/documents/${id}/parse`).then((response) => response.data),
+  const enqueueParse = useMutation({
+    mutationFn: (id: number) => api.post<JobResponse>(`/documents/${id}/parse`).then((response) => response.data),
+  });
+
+  const jobId = state.stage === "queued" || state.stage === "parsing" ? state.jobId : null;
+  const job = useQuery({
+    queryKey: ["job", jobId],
+    queryFn: async () => (await api.get<JobResponse>(`/jobs/${jobId}`)).data,
+    enabled: Boolean(jobId),
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      return data?.status === "success" || data?.status === "failed" ? false : 1500;
+    },
   });
 
   const selectedFile = "file" in state ? state.file : undefined;
-  const isBusy = state.stage === "uploading" || state.stage === "parsing";
+  const isPolling = state.stage === "queued" || state.stage === "parsing";
+  const activeJobStatus = job.data?.status;
+  const visibleStage = isPolling && activeJobStatus === "started" ? "parsing" : state.stage;
+  const completedResult = isPolling && activeJobStatus === "success" ? job.data?.result : undefined;
+  const failedJobError = isPolling && activeJobStatus === "failed" ? job.data?.error || "Parse failed." : undefined;
+  const isBusy = state.stage === "uploading" || (isPolling && !completedResult && !failedJobError);
 
   const runUpload = async (file: File) => {
     try {
       setState({ stage: "uploading", file });
       const document = await upload.mutateAsync(file);
-      setState({ stage: "parsing", file, document });
-      const result = await parse.mutateAsync(document.id);
+      const parseJob = await enqueueParse.mutateAsync(document.id);
       await queryClient.invalidateQueries({ queryKey: ["documents"] });
-      setState({ stage: "done", file, document, result });
+      setState({ stage: "queued", file, document, jobId: parseJob.job_id });
     } catch (error) {
       setState(getErrorState(error, file));
     }
@@ -94,7 +110,7 @@ export default function UploadPage() {
           onInvalidFile={(message) => setState({ stage: "error", message })}
         />
 
-        {selectedFile && state.stage !== "done" && (
+        {selectedFile && !completedResult && (
           <div className="rounded-lg border border-slate-200 bg-white p-5">
             <div className="flex items-center justify-between gap-4">
               <div>
@@ -121,19 +137,19 @@ export default function UploadPage() {
           </div>
         )}
 
-        {state.stage === "parsing" && (
+        {isPolling && !completedResult && !failedJobError && (
           <div className="rounded-lg border border-slate-200 bg-white p-5 text-sm text-slate-600">
             <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-slate-300 border-t-slate-900 align-[-3px]" />{" "}
-            Extracting...
+            {visibleStage === "queued" ? "Queued..." : "Extracting..."}
           </div>
         )}
 
-        {state.stage === "done" && <UploadResult result={state.result} />}
+        {completedResult && <UploadResult result={completedResult} />}
 
-        {state.stage === "error" && (
+        {(state.stage === "error" || failedJobError) && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 p-5 text-sm text-rose-900">
-            <p className="font-medium">{state.message}</p>
-            {state.duplicateId && (
+            <p className="font-medium">{failedJobError || (state.stage === "error" ? state.message : "Parse failed.")}</p>
+            {state.stage === "error" && state.duplicateId && (
               <Link to={`/documents/${state.duplicateId}`} className="mt-3 inline-block font-medium text-rose-700 underline">
                 View document
               </Link>
