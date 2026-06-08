@@ -1,3 +1,10 @@
+/**
+ * Sticky reviewer action controls.
+ *
+ * Approval captures learning artifacts on the backend; rejection records a
+ * reason and removes the document from the active dashboard list.
+ */
+
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
@@ -10,6 +17,8 @@ export default function ReviewControls({ documentId }: { documentId: number }) {
   const [reason, setReason] = useState("");
 
   const refresh = async () => {
+    /** Refresh detail and dashboard caches after a terminal review action. */
+
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["document", String(documentId)] }),
       queryClient.invalidateQueries({ queryKey: ["documents"] }),

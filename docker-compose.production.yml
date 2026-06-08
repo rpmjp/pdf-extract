@@ -1,0 +1,136 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be provided}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be provided}
+    healthcheck:
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  pgbackrest-cron:
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:?POSTGRES_USER must be provided}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided}
+      PGDATABASE: ${POSTGRES_DB:?POSTGRES_DB must be provided}
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  redis:
+    healthcheck:
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  minio:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be provided}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be provided}
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  minio-replica:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be provided}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be provided}
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: always
+
+  minio-sync:
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be provided}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be provided}
+      MINIO_BUCKET: ${MINIO_BUCKET:-documents}
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    env_file: []
+    environment:
+      APP_ENV: production
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be provided}
+      SEED_DEV_USERS: "false"
+      ALLOW_QUERY_TOKEN_AUTH: "false"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be provided}
+      JWT_KEY_ID: ${JWT_KEY_ID:?JWT_KEY_ID must be provided}
+      JWT_PREVIOUS_SECRETS: ${JWT_PREVIOUS_SECRETS:-}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be provided}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be provided}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_HOST: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be provided}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be provided}
+      MINIO_BUCKET: ${MINIO_BUCKET:-documents}
+      LLM_BACKEND: ${LLM_BACKEND:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL must be provided}
+      LLM_MODEL: ${LLM_MODEL:?LLM_MODEL must be provided}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  worker:
+    # Two replicas with concurrency=1 each.
+    # The Ollama LLM is the bottleneck — one concurrent task per worker prevents
+    # GPU memory contention. Scale horizontally (more replicas) rather than
+    # vertically (higher concurrency). See docs/operations/scaling.md.
+    deploy:
+      replicas: 2
+    env_file: []
+    environment:
+      APP_ENV: production
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS must be provided}
+      SEED_DEV_USERS: "false"
+      ALLOW_QUERY_TOKEN_AUTH: "false"
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be provided}
+      JWT_KEY_ID: ${JWT_KEY_ID:?JWT_KEY_ID must be provided}
+      JWT_PREVIOUS_SECRETS: ${JWT_PREVIOUS_SECRETS:-}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be provided}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be provided}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be provided}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      MINIO_HOST: minio
+      MINIO_PORT: 9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY must be provided}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY must be provided}
+      MINIO_BUCKET: ${MINIO_BUCKET:-documents}
+      LLM_BACKEND: ${LLM_BACKEND:-ollama}
+      LLM_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL must be provided}
+      LLM_MODEL: ${LLM_MODEL:?LLM_MODEL must be provided}
+
+  grafana:
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:?GRAFANA_ADMIN_USER must be provided}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be provided}
+      GF_USERS_ALLOW_SIGN_UP: "false"

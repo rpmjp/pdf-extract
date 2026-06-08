@@ -1,15 +1,26 @@
+/**
+ * Admin failure-analysis page.
+ *
+ * Correction examples are grouped by deterministic failure category so admins
+ * can decide which rules, prompts, or eval cases deserve attention next.
+ */
+
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { api, type FailureCategorySummary, type FailuresResponse } from "../api";
 
 function formatValue(value: unknown) {
+  /** Render arbitrary diff values safely in a compact table row. */
+
   if (value === null || typeof value === "undefined") return "blank";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
 
 function Trend({ points }: { points: FailureCategorySummary["trend"] }) {
+  /** Tiny weekly bar chart for one failure category. */
+
   const max = Math.max(1, ...points.map((point) => point.count));
   return (
     <div className="flex h-10 items-end gap-1" aria-label="Weekly trend">
@@ -21,6 +32,8 @@ function Trend({ points }: { points: FailureCategorySummary["trend"] }) {
 }
 
 function CategoryRow({ category }: { category: FailureCategorySummary }) {
+  /** Expandable row showing sample document diffs for a category. */
+
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -60,6 +73,8 @@ function CategoryRow({ category }: { category: FailureCategorySummary }) {
 }
 
 export default function AdminFailuresPage() {
+  /** Fetch and render the default 30-day failure window. */
+
   const { data, isLoading, error } = useQuery({
     queryKey: ["admin-failures", "30d"],
     queryFn: async () => (await api.get<FailuresResponse>("/admin/failures?since=30d")).data,

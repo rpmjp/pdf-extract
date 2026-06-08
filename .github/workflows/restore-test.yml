@@ -1,0 +1,63 @@
+name: Weekly Restore Test
+
+on:
+  schedule:
+    # Every Sunday at 04:00 UTC (after the Saturday night backup window)
+    - cron: "0 4 * * 0"
+  workflow_dispatch:   # Allow manual runs
+
+jobs:
+  restore-test:
+    name: Isolated restore drill
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Write .env for test
+        run: |
+          cat > .env <<EOF
+          APP_ENV=ci
+          API_PORT=8003
+          POSTGRES_USER=pdfextract
+          POSTGRES_PASSWORD=ci-restore-test-password
+          POSTGRES_DB=pdfextract_dev
+          POSTGRES_PORT=5434
+          REDIS_PORT=6380
+          MINIO_ROOT_USER=minioroot
+          MINIO_ROOT_PASSWORD=miniopassword
+          MINIO_API_PORT=9000
+          MINIO_CONSOLE_PORT=9001
+          MINIO_ACCESS_KEY=minioroot
+          MINIO_SECRET_KEY=miniopassword
+          MINIO_KMS_SECRET_KEY=restore-test-kms-key-32-chars-long!!
+          MINIO_BUCKET=documents
+          JWT_SECRET=ci-jwt-secret-for-restore-test-at-least-32-chars
+          JWT_KEY_ID=ci-v1
+          JWT_PREVIOUS_SECRETS=
+          CORS_ORIGINS=http://localhost:5173
+          SEED_DEV_USERS=true
+          ALLOW_QUERY_TOKEN_AUTH=true
+          LLM_BACKEND=ollama
+          LLM_BASE_URL=http://host.docker.internal:11434/v1
+          LLM_MODEL=qwen2.5vl:7b
+          EOF
+
+      - name: Run restore test
+        run: |
+          bash scripts/test_restore.sh
+        env:
+          POSTGRES_USER: pdfextract
+          POSTGRES_PASSWORD: ci-restore-test-password
+          POSTGRES_DB: pdfextract_dev
+
+      - name: Upload restore test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restore-test-logs
+          path: |
+            /tmp/pgbackrest-*.log
+          if-no-files-found: ignore
+          retention-days: 7

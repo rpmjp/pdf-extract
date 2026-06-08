@@ -1,3 +1,11 @@
+/**
+ * Operational confidence insights dashboard.
+ *
+ * This page turns backend quality metrics into navigation: alerts, low
+ * confidence rows, and chart points link reviewers back to the exact document
+ * or queue that needs attention.
+ */
+
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -21,17 +29,23 @@ import StatusBadge, { PriorityBadge } from "../components/StatusBadge";
 type Range = "7d" | "30d" | "90d" | "all";
 
 function pct(v: number | null) {
+  /** Format ratio metrics as whole percentages. */
+
   if (v === null || v === undefined) return "—";
   return `${Math.round(v * 100)}%`;
 }
 
 function deltaColor(delta: number | null, lowerIsBetter = false) {
+  /** Choose positive/negative color semantics for KPI deltas. */
+
   if (delta === null) return "text-slate-400";
   const positive = lowerIsBetter ? delta < 0 : delta > 0;
   return positive ? "text-emerald-600" : delta === 0 ? "text-slate-400" : "text-rose-600";
 }
 
 function deltaLabel(delta: number | null, isPercent = true) {
+  /** Render compact period-over-period delta labels. */
+
   if (delta === null) return null;
   const sign = delta > 0 ? "+" : "";
   return isPercent ? `${sign}${Math.round(delta * 100)}pp` : `${sign}${delta.toFixed(1)}`;
@@ -58,6 +72,8 @@ interface KpiCardProps {
 }
 
 function KpiCard({ label, kpi, format = pct, lowerIsBetter = false, tooltip, onClick }: KpiCardProps) {
+  /** KPI summary card with optional drill-down click behavior. */
+
   const valueStr = kpi.current !== null ? format(kpi.current) : "—";
   const color = deltaColor(kpi.delta, lowerIsBetter);
   const label_ = deltaLabel(kpi.delta, format === pct);
@@ -86,6 +102,8 @@ function KpiCard({ label, kpi, format = pct, lowerIsBetter = false, tooltip, onC
 // ── Alert Card ────────────────────────────────────────────────────────────────
 
 function AlertCard({ alert, onNavigate }: { alert: InsightsOverview["alerts"][0]; onNavigate: (url: string) => void }) {
+  /** Render one operational alert as a full-width navigation target. */
+
   const isError = alert.severity === "error";
   return (
     <button
@@ -107,6 +125,8 @@ function AlertCard({ alert, onNavigate }: { alert: InsightsOverview["alerts"][0]
 // ── Chart Card ────────────────────────────────────────────────────────────────
 
 function ChartCard({ title, children, empty, id }: { title: string; children: React.ReactNode; empty?: boolean; id?: string }) {
+  /** Shared frame for charts with consistent empty-state handling. */
+
   return (
     <div id={id} className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</h2>
@@ -122,6 +142,8 @@ function ChartCard({ title, children, empty, id }: { title: string; children: Re
 // ── Scatter: Volume vs Confidence ─────────────────────────────────────────────
 
 function VolumeScatter({ data, onDotClick }: { data: ScatterPoint[]; onDotClick: (id: number, status: string) => void }) {
+  /** Plot document confidence over time and let users open a clicked document. */
+
   const plotData = data.map((d) => ({
     x: new Date(d.date).getTime(),
     y: d.confidence,
@@ -188,6 +210,8 @@ function VolumeScatter({ data, onDotClick }: { data: ScatterPoint[]; onDotClick:
 // ── Pass Rate Trend ───────────────────────────────────────────────────────────
 
 function PassRateTrend({ data }: { data: InsightsOverview["pass_rate_trend"] }) {
+  /** Show pass-rate trend against the target line used by operations. */
+
   return (
     <ChartCard id="chart-pass-rate-trend" title="Pass rate trend — target 95%" empty={data.length === 0}>
       {data.length > 0 && (

@@ -1,6 +1,15 @@
+/**
+ * Document activity timeline.
+ *
+ * Audit entries show reviewer actions and system events in reverse chronological
+ * order so a future reviewer can understand how the document changed.
+ */
+
 import type { AuditEntry } from "../api";
 
 function describe(entry: AuditEntry) {
+  /** Convert audit action keys into short human-readable phrases. */
+
   if (entry.action === "edit_txn") return `edited transaction #${String(entry.details.transaction_id ?? "")}`;
   if (entry.action === "approve") return "approved the document";
   if (entry.action === "reject") return "rejected the document";
@@ -8,6 +17,8 @@ function describe(entry: AuditEntry) {
 }
 
 export default function AuditLog({ entries }: { entries: AuditEntry[] }) {
+  /** Render the audit trail for a document. */
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="text-base font-semibold text-slate-900">Activity</h2>

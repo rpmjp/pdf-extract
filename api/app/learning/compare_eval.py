@@ -1,3 +1,5 @@
+"""Compare the latest few-shot-off and few-shot-on eval runs."""
+
 from __future__ import annotations
 
 import argparse
@@ -15,6 +17,8 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def latest_run(db, eval_set_version: str, few_shot: str) -> EvalRun | None:
+    """Fetch the newest eval run for one eval set and few-shot mode."""
+
     return (
         db.query(EvalRun)
         .filter(EvalRun.eval_set_version == eval_set_version)
@@ -25,6 +29,8 @@ def latest_run(db, eval_set_version: str, few_shot: str) -> EvalRun | None:
 
 
 def compare(eval_set_version: str) -> dict:
+    """Return aggregate metric deltas between few-shot disabled and enabled."""
+
     db = SessionLocal()
     try:
         off = latest_run(db, eval_set_version, "off")
@@ -53,6 +59,8 @@ def compare(eval_set_version: str) -> dict:
 
 
 def main():
+    """CLI entry point used for reporting A/B eval results."""
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--set-version", required=True)
     args = parser.parse_args()

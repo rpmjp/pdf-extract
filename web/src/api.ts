@@ -1,3 +1,11 @@
+/**
+ * Frontend API boundary.
+ *
+ * This file intentionally centralizes the axios instance, auth token lifecycle,
+ * and response contracts used by the React app. Keeping these types in one
+ * place makes backend schema changes easier to spot during TypeScript builds.
+ */
+
 import axios from "axios";
 
 const baseURL = import.meta.env.VITE_API_URL || "http://localhost:8003";
@@ -5,21 +13,74 @@ const baseURL = import.meta.env.VITE_API_URL || "http://localhost:8003";
 export const api = axios.create({ baseURL });
 
 const TOKEN_KEY = "pdf_extract_token";
+const REFRESH_TOKEN_KEY = "pdf_extract_refresh_token";
 
 export function getAuthToken() {
+  /** Read the short-lived access token used on normal API requests. */
+
   return localStorage.getItem(TOKEN_KEY);
 }
 
+export function getRefreshToken() {
+  /** Read the longer-lived refresh token used only for token rotation. */
+
+  return localStorage.getItem(REFRESH_TOKEN_KEY);
+}
+
 export function setAuthToken(token: string | null) {
+  /** Store or clear the current access token. */
+
   if (token) localStorage.setItem(TOKEN_KEY, token);
   else localStorage.removeItem(TOKEN_KEY);
 }
 
+export function setRefreshToken(token: string | null) {
+  /** Store or clear the current refresh token. */
+
+  if (token) localStorage.setItem(REFRESH_TOKEN_KEY, token);
+  else localStorage.removeItem(REFRESH_TOKEN_KEY);
+}
+
+export function clearAuthTokens() {
+  /** Clear all browser-held credentials after logout or refresh failure. */
+
+  setAuthToken(null);
+  setRefreshToken(null);
+}
+
 api.interceptors.request.use((config) => {
+  // Every authenticated endpoint expects a Bearer access token. Individual
+  // calls do not set this header manually, which keeps components auth-agnostic.
   const token = getAuthToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    // Retry one 401 with the refresh token. The `_retry` marker prevents an
+    // infinite loop if the refresh token is also expired or revoked.
+    const original = error.config;
+    const refreshToken = getRefreshToken();
+    if (error.response?.status !== 401 || original?._retry || !refreshToken || original?.url === "/auth/refresh") {
+      return Promise.reject(error);
+    }
+    original._retry = true;
+    try {
+      const response = await axios.post<LoginResponse>(`${baseURL}/auth/refresh`, { refresh_token: refreshToken });
+      setAuthToken(response.data.access_token);
+      setRefreshToken(response.data.refresh_token || null);
+      original.headers = original.headers || {};
+      original.headers.Authorization = `Bearer ${response.data.access_token}`;
+      return api(original);
+    } catch (refreshError) {
+      clearAuthTokens();
+      window.location.assign("/");
+      return Promise.reject(refreshError);
+    }
+  },
+);
 
 export interface AuthUser {
   username: string;
@@ -28,6 +89,7 @@ export interface AuthUser {
 
 export interface LoginResponse {
   access_token: string;
+  refresh_token?: string;
   token_type: "bearer";
   user: AuthUser;
 }

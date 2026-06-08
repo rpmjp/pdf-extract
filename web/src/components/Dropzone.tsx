@@ -1,3 +1,10 @@
+/**
+ * PDF dropzone.
+ *
+ * The component is deliberately presentational: it validates selected files and
+ * reports them upward, while UploadPage owns the workflow state and API calls.
+ */
+
 import { useRef, useState } from "react";
 
 interface DropzoneProps {
@@ -8,6 +15,8 @@ interface DropzoneProps {
 }
 
 function isPdf(file: File) {
+  /** Accept PDFs even when the browser omits MIME type metadata. */
+
   const hasPdfExtension = file.name.toLowerCase().endsWith(".pdf");
   const hasPdfMime = file.type === "application/pdf";
   return hasPdfExtension && (!file.type || hasPdfMime);
@@ -19,6 +28,8 @@ export default function Dropzone({ disabled = false, onFileSelected, onFilesSele
   const [isDragging, setIsDragging] = useState(false);
 
   const selectFiles = (fileList: FileList | null) => {
+    /** Normalize drag/drop and file-picker inputs into validated File objects. */
+
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
     const invalid = files.find((file) => !isPdf(file));

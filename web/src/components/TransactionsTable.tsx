@@ -1,17 +1,27 @@
+/**
+ * Read-only transaction table for the document trust view.
+ */
+
 import type { Transaction } from "../api";
 import ConfidenceMeter from "./ConfidenceMeter";
 
 function formatAmount(transaction: Transaction) {
+  /** Prefix deposits/withdrawals with reviewer-friendly signs. */
+
   const formatted = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(transaction.amount);
   return transaction.type === "deposit" ? `+${formatted}` : `−${formatted}`;
 }
 
 function formatBalance(value: number | null) {
+  /** Render optional running balances as currency or an em dash. */
+
   if (value === null) return "—";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 }
 
 export default function TransactionsTable({ transactions }: { transactions: Transaction[] }) {
+  /** Render extracted transactions with type, amount, and confidence styling. */
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white">
       <div className="border-b border-slate-200 px-4 py-3">

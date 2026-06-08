@@ -1,7 +1,16 @@
+/**
+ * Upload completion summary.
+ *
+ * Rendered after a parse job succeeds so the uploader can immediately inspect
+ * status, reconciliation result, failed checks, and the document detail link.
+ */
+
 import { Link } from "react-router-dom";
 import type { ParseResponse } from "../api";
 
 function StatusBadge({ status }: { status: string }) {
+  /** Local lightweight badge for parse-result status. */
+
   const styles: Record<string, string> = {
     verified: "bg-emerald-100 text-emerald-700",
     approved: "bg-emerald-100 text-emerald-700",
@@ -16,6 +25,8 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 export default function UploadResult({ result }: { result: ParseResponse }) {
+  /** Summarize the parse response returned by the completed background job. */
+
   const transactionCount = result.extraction.transactions.length;
   const failedChecks = result.reconciliation.checks.filter((check) => !check.passed);
 

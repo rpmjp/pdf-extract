@@ -1,0 +1,11 @@
+# pgBackRest backup schedule — executed by supercronic inside pgbackrest-cron
+
+# Daily full backup at 02:00 UTC
+0 2 * * * pgbackrest backup --stanza=main --type=full
+
+# Expire old backups immediately after the full backup
+5 2 * * * pgbackrest expire --stanza=main
+
+# Weekly integrity check — Sunday 03:00 UTC
+# Verifies backup files and their WAL archive chain
+0 3 * * 0 pgbackrest check --stanza=main

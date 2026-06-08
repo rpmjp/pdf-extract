@@ -1,14 +1,25 @@
+/**
+ * Editable transaction row.
+ *
+ * The row highlights changed fields and shows the original extracted value
+ * inline so reviewers can verify exactly what they are correcting.
+ */
+
 import type { Transaction, TransactionUpdate } from "../api";
 import ConfidenceMeter from "./ConfidenceMeter";
 
 const fields = ["date", "description", "type", "amount", "balance"] as const;
 
 function formatValue(value: string | number | null | undefined) {
+  /** Normalize blank values for the "Original" hint text. */
+
   if (value === null || typeof value === "undefined" || value === "") return "blank";
   return String(value);
 }
 
 function changedFields(form: TransactionUpdate, original?: Transaction) {
+  /** Identify fields that differ from the original extraction snapshot. */
+
   if (!original) return new Set<string>();
   return new Set(
     fields.filter((field) => {
@@ -19,6 +30,8 @@ function changedFields(form: TransactionUpdate, original?: Transaction) {
 }
 
 function OriginalValue({ show, value }: { show: boolean; value: string | number | null | undefined }) {
+  /** Conditionally render the prior value under an edited input. */
+
   if (!show) return null;
   return <p className="mt-1 text-[11px] text-amber-700">Original: {formatValue(value)}</p>;
 }

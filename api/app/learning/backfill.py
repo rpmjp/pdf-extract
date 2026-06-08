@@ -1,3 +1,10 @@
+"""Backfill correction examples from already-approved documents.
+
+This script is operational glue for the continuous-improvement loop. It scans
+approved documents that predate the learning pipeline and creates the same
+append-only correction-example records that normal approvals create.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -16,6 +23,8 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def backfill() -> dict:
+    """Create missing correction examples for approved documents."""
+
     db = SessionLocal()
     created = 0
     skipped = 0
@@ -35,6 +44,8 @@ def backfill() -> dict:
 
 
 def main():
+    """CLI entry point used from the API container."""
+
     argparse.ArgumentParser().parse_args()
     print(json.dumps(backfill(), indent=2))
 

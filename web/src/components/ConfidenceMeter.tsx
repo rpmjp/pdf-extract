@@ -1,4 +1,13 @@
+/**
+ * Confidence display primitives.
+ *
+ * Confidence is a deterministic risk signal from the backend. The compact form
+ * is used in rows; the full meter is used where reviewers need more emphasis.
+ */
+
 function confidenceTone(value?: number | null) {
+  /** Map numeric confidence to a visual severity tier. */
+
   if (typeof value !== "number") return { label: "Unknown", bar: "bg-slate-300", text: "text-slate-500", bg: "bg-slate-100" };
   if (value >= 0.9) return { label: "High", bar: "bg-emerald-500", text: "text-emerald-700", bg: "bg-emerald-50" };
   if (value >= 0.75) return { label: "Medium", bar: "bg-amber-500", text: "text-amber-700", bg: "bg-amber-50" };
@@ -6,10 +15,14 @@ function confidenceTone(value?: number | null) {
 }
 
 export function formatConfidence(value?: number | null) {
+  /** Format confidence values as whole percentages for dense UI. */
+
   return typeof value === "number" ? `${Math.round(value * 100)}%` : "—";
 }
 
 export default function ConfidenceMeter({ value, compact = false }: { value?: number | null; compact?: boolean }) {
+  /** Render either a badge-like value or a full horizontal confidence bar. */
+
   const tone = confidenceTone(value);
   const width = typeof value === "number" ? `${Math.max(4, Math.min(100, Math.round(value * 100)))}%` : "0%";
 

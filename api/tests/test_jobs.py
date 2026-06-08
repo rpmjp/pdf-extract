@@ -1,5 +1,6 @@
 from conftest import create_document, main
 from app.models import ParseJob
+from app import celery_helpers
 
 
 class FakeAsyncResult:
@@ -32,13 +33,13 @@ def test_parse_enqueues_job_and_reuses_active_job(client, db, auth_headers, monk
     doc = create_document(db, filename="pytest-parse.pdf")
     task = FakeTask()
 
-    monkeypatch.setattr(main, "parse_document_task", task)
+    monkeypatch.setattr(celery_helpers, "parse_document_task", task)
     monkeypatch.setattr(
-        main,
+        celery_helpers,
         "AsyncResult",
         lambda job_id, app=None: FakeAsyncResult(job_id, state="STARTED"),
     )
-    monkeypatch.setattr(main, "celery_has_known_job", lambda job_id: True)
+    monkeypatch.setattr(celery_helpers, "celery_has_known_job", lambda job_id: True)
 
     first = client.post(f"/documents/{doc.id}/parse", headers=auth_headers)
 
@@ -73,13 +74,13 @@ def test_parse_replaces_stale_pending_job(client, db, auth_headers, monkeypatch)
     )
     task = FakeTask()
 
-    monkeypatch.setattr(main, "parse_document_task", task)
+    monkeypatch.setattr(celery_helpers, "parse_document_task", task)
     monkeypatch.setattr(
-        main,
+        celery_helpers,
         "AsyncResult",
         lambda job_id, app=None: FakeAsyncResult(job_id, state="PENDING"),
     )
-    monkeypatch.setattr(main, "broker_has_pending_job", lambda job_id: False)
+    monkeypatch.setattr(celery_helpers, "broker_has_pending_job", lambda job_id: False)
 
     response = client.post(f"/documents/{doc.id}/parse", headers=auth_headers)
 
@@ -98,11 +99,11 @@ def test_job_poll_recovers_orphaned_started_job(client, db, auth_headers, monkey
     )
     task = FakeTask()
 
-    monkeypatch.setattr(main, "parse_document_task", task)
-    monkeypatch.setattr(main, "celery_has_known_job", lambda job_id: False)
-    monkeypatch.setattr(main.redis, "Redis", FakeRedis)
+    monkeypatch.setattr(celery_helpers, "parse_document_task", task)
+    monkeypatch.setattr(celery_helpers, "celery_has_known_job", lambda job_id: False)
+    monkeypatch.setattr(celery_helpers.redis, "Redis", FakeRedis)
     monkeypatch.setattr(
-        main,
+        celery_helpers,
         "AsyncResult",
         lambda job_id, app=None: FakeAsyncResult(job_id, state="STARTED"),
     )
@@ -125,7 +126,7 @@ def test_job_poll_recovers_orphaned_started_job(client, db, auth_headers, monkey
 def test_job_success_serializes_result(client, auth_headers, monkeypatch):
     result = {"id": 99, "status": "verified"}
     monkeypatch.setattr(
-        main,
+        celery_helpers,
         "AsyncResult",
         lambda job_id, app=None: FakeAsyncResult(job_id, state="SUCCESS", result=result),
     )

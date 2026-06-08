@@ -1,10 +1,21 @@
+/**
+ * Reconciliation summary panel.
+ *
+ * This is the deterministic accounting check that gives reviewers confidence
+ * that extracted rows reconcile against statement balances.
+ */
+
 import type { ParseResponse } from "../api";
 
 function formatMoney(value: number) {
+  /** Format reconciliation totals in the app's current USD-only display. */
+
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 }
 
 export default function ReconciliationPanel({ reconciliation }: { reconciliation: ParseResponse["reconciliation"] }) {
+  /** Render totals and failed check reasons for the document trust view. */
+
   const failedChecks = reconciliation.checks.filter((check) => !check.passed);
 
   return (

@@ -1,3 +1,5 @@
+"""Deterministic post-processing rules learned from correction examples."""
+
 from __future__ import annotations
 
 import re
@@ -8,12 +10,16 @@ from ..schemas import StatementExtraction
 
 
 def _amount_patterns(amount: float) -> list[str]:
+    """Return regex-safe variants for matching a money amount in source text."""
+
     fixed = f"{amount:,.2f}"
     plain = f"{amount:.2f}"
     return [re.escape(fixed), re.escape(plain), re.escape(fixed.replace(",", ""))]
 
 
 def _clean_description(line: str, txn_date: str, amount: float) -> str:
+    """Strip dates, amounts, and column labels from a candidate source line."""
+
     text = line
     date_parts = [txn_date, txn_date.replace("-", "/")]
     for part in date_parts:
@@ -28,6 +34,8 @@ def _clean_description(line: str, txn_date: str, amount: float) -> str:
 
 
 def recover_blank_descriptions(extraction: StatementExtraction, doc_context: dict[str, Any]) -> tuple[StatementExtraction, list[dict]]:
+    """Fill blank descriptions by matching date+amount back to source text."""
+
     text = doc_context.get("text") or ""
     if not text:
         return extraction, []
@@ -68,6 +76,8 @@ ENABLED_RULES = [recover_blank_descriptions]
 
 
 def apply_rules(extraction: StatementExtraction, doc_context: dict[str, Any]) -> tuple[StatementExtraction, dict[str, int], list[dict]]:
+    """Run enabled deterministic rules and return counts for metrics/evals."""
+
     current = extraction
     counts: dict[str, int] = {}
     corrections: list[dict] = []

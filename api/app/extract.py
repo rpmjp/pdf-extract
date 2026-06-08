@@ -1,3 +1,9 @@
+"""PDF classification, text extraction, and OCR/vision preprocessing.
+
+Digital PDFs are parsed from their embedded text layer.  Scanned statements are
+rendered to images for the vision model, with optional deskew/denoise steps for
+low-confidence cases.
+"""
 import io
 import pdfplumber
 import base64
@@ -29,6 +35,7 @@ def classify_and_extract(pdf_bytes: bytes) -> dict:
 
 
 def deskew_image(image: Image.Image) -> Image.Image:
+    """Pick the small rotation that creates the strongest horizontal text rows."""
     gray = ImageOps.grayscale(image)
     best_angle = 0
     best_score = None
@@ -52,6 +59,7 @@ def deskew_image(image: Image.Image) -> Image.Image:
 
 
 def preprocess_page_image(image: Image.Image) -> Image.Image:
+    """Normalize, denoise, and sharpen a page before OCR or vision fallback."""
     image = deskew_image(image.convert("RGB"))
     gray = ImageOps.grayscale(image)
     gray = ImageOps.autocontrast(gray)
@@ -62,7 +70,7 @@ def preprocess_page_image(image: Image.Image) -> Image.Image:
 
 
 def render_pages_to_images(pdf_bytes: bytes, dpi: int = 200, preprocess: bool = False) -> list[str]:
-    """Render every PDF page to a base64-encoded PNG."""
+    """Render every PDF page to base64 PNGs accepted by the LLM client."""
     images = []
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:

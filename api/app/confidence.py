@@ -1,7 +1,14 @@
+"""Deterministic confidence scoring for extracted statement data.
+
+LLMs are poor at calibrated self-confidence, so this module scores extraction
+quality from observable signals: source type, missing fields, reconciliation
+status, and disagreement between two extraction passes.
+"""
 from .schemas import StatementExtraction, Transaction
 
 
 def transaction_confidence(txn: Transaction, *, document_kind: str, reconciliation_passed: bool) -> float:
+    """Score one transaction using deterministic quality heuristics."""
     score = 0.94 if reconciliation_passed else 0.72
     if document_kind == "scanned":
         score -= 0.12
@@ -15,6 +22,7 @@ def transaction_confidence(txn: Transaction, *, document_kind: str, reconciliati
 
 
 def document_confidence(extraction: StatementExtraction, *, document_kind: str, reconciliation_passed: bool) -> float:
+    """Score a document by its weakest transaction and required header fields."""
     if not extraction.transactions:
         return 0.05
     scores = [
@@ -28,6 +36,7 @@ def document_confidence(extraction: StatementExtraction, *, document_kind: str, 
 
 
 def extraction_disagreement(primary: StatementExtraction, secondary: StatementExtraction) -> dict:
+    """Compare two extraction passes and return field-level disagreements."""
     checks = []
 
     for field in ("account_holder", "account_number", "statement_period", "opening_balance", "closing_balance"):
@@ -71,5 +80,6 @@ def extraction_disagreement(primary: StatementExtraction, secondary: StatementEx
 
 
 def apply_disagreement_penalty(confidence: float, disagreement: dict) -> float:
+    """Lower confidence proportionally when ensemble extraction disagrees."""
     penalty = min(0.35, disagreement["score"] * 0.7)
     return round(max(0.05, confidence - penalty), 2)

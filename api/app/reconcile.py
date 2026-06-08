@@ -1,3 +1,9 @@
+"""Statement reconciliation and transaction sign correction.
+
+Reconciliation is the deterministic guardrail around LLM extraction.  It checks
+whether transactions explain the opening-to-closing balance movement and flags
+documents for review when the math does not work.
+"""
 from .schemas import StatementExtraction
 
 CENTS = 0.01  # tolerance for float rounding

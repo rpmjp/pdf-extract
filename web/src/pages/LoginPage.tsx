@@ -1,5 +1,12 @@
+/**
+ * Login page.
+ *
+ * The form keeps the existing developer-friendly defaults for local use, then
+ * stores both access and refresh tokens through the shared API helpers.
+ */
+
 import { useState, type FormEvent } from "react";
-import { api, setAuthToken, type AuthUser, type LoginResponse } from "../api";
+import { api, setAuthToken, setRefreshToken, type AuthUser, type LoginResponse } from "../api";
 
 interface LoginPageProps {
   onLogin: (user: AuthUser) => void;
@@ -12,12 +19,15 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const submit = async (event: FormEvent) => {
+    /** Authenticate and hand the returned user to the app shell. */
+
     event.preventDefault();
     setError(null);
     setIsSubmitting(true);
     try {
       const response = await api.post<LoginResponse>("/auth/login", { username, password });
       setAuthToken(response.data.access_token);
+      setRefreshToken(response.data.refresh_token || null);
       onLogin(response.data.user);
     } catch {
       setError("Invalid username or password.");

@@ -1,3 +1,5 @@
+"""Build immutable eval sets from accumulated correction examples."""
+
 from __future__ import annotations
 
 import argparse
@@ -17,6 +19,8 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def next_version(db) -> str:
+    """Return the next monotonically increasing eval-set version label."""
+
     versions = [row[0] for row in db.query(EvalSetMember.eval_set_version).distinct().all()]
     if not versions:
         return "v1"
@@ -25,6 +29,8 @@ def next_version(db) -> str:
 
 
 def select_examples(db, limit: int) -> list[CorrectionExample]:
+    """Select a balanced sample, taking at least one row per failure category."""
+
     examples = db.query(CorrectionExample).order_by(CorrectionExample.created_at.desc(), CorrectionExample.id.desc()).all()
     by_category: dict[str, list[CorrectionExample]] = defaultdict(list)
     for example in examples:
@@ -46,6 +52,8 @@ def select_examples(db, limit: int) -> list[CorrectionExample]:
 
 
 def build_eval_set(version: str | None = None, limit: int = 30) -> dict:
+    """Persist a locked eval set so prompt/rule changes compare apples to apples."""
+
     db = SessionLocal()
     try:
         version = version or next_version(db)
@@ -75,6 +83,8 @@ def build_eval_set(version: str | None = None, limit: int = 30) -> dict:
 
 
 def main():
+    """CLI entry point for creating a new eval-set version."""
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--version")
     parser.add_argument("--limit", type=int, default=30)

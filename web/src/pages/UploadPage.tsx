@@ -1,3 +1,11 @@
+/**
+ * Upload workflow page.
+ *
+ * The page uses a discriminated-union state machine instead of many booleans.
+ * That keeps single-file upload, batch upload, queued jobs, parsing, success,
+ * and error states explicit and easy to render.
+ */
+
 import axios from "axios";
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -7,6 +15,8 @@ import UploadResult from "../components/UploadResult";
 import { api, type BatchUploadResponse, type Document, type JobResponse, type ParseResponse } from "../api";
 
 type BatchItem = {
+  /** Per-file status used while a batch is uploading and parsing concurrently. */
+
   file: File;
   status: "selected" | "uploading" | "queued" | "parsing" | "done" | "error";
   document?: Document;
@@ -28,15 +38,21 @@ type UploadStage =
   | { stage: "error"; message: string; file?: File; duplicateId?: number };
 
 function formatFileSize(size: number) {
+  /** Format file sizes for selected-file and batch summaries. */
+
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function wait(ms: number) {
+  /** Small polling delay helper for batch parse jobs. */
+
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function getErrorState(error: unknown, file?: File): UploadStage {
+  /** Convert axios/backend failures into user-facing upload states. */
+
   if (!axios.isAxiosError(error)) {
     return { stage: "error", message: "Something went wrong.", file };
   }
@@ -83,6 +99,8 @@ export default function UploadPage() {
 
   const jobId = state.stage === "queued" || state.stage === "parsing" ? state.jobId : null;
   const job = useQuery({
+    // Single-file uploads poll with TanStack Query so cache invalidation and
+    // retry/stop behavior stay declarative.
     queryKey: ["job", jobId],
     queryFn: async () => (await api.get<JobResponse>(`/jobs/${jobId}`)).data,
     enabled: Boolean(jobId),
@@ -102,6 +120,8 @@ export default function UploadPage() {
   const isBusy = state.stage === "uploading" || state.stage === "batch_running" || (isPolling && !completedResult && !failedJobError);
 
   const runUpload = async (file: File) => {
+    /** Upload one file, enqueue parse, then switch into polling mode. */
+
     try {
       setState({ stage: "uploading", file });
       const document = await upload.mutateAsync(file);
@@ -114,6 +134,8 @@ export default function UploadPage() {
   };
 
   const waitForJob = async (jobId: string): Promise<ParseResponse> => {
+    /** Poll a parse job until terminal state; used by the batch runner. */
+
     for (;;) {
       const response = await api.get<JobResponse>(`/jobs/${jobId}`);
       if (response.data.status === "success" && response.data.result) return response.data.result;
@@ -123,6 +145,8 @@ export default function UploadPage() {
   };
 
   const updateBatchItem = (index: number, patch: Partial<BatchItem>) => {
+    /** Patch one visible batch row without replacing the whole workflow state. */
+
     setState((current) => {
       if (current.stage !== "batch_running") return current;
       const items = current.items.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item));
@@ -131,6 +155,8 @@ export default function UploadPage() {
   };
 
   const runBatch = async (files: File[]) => {
+    /** Upload many PDFs, then enqueue and await parse jobs per successful file. */
+
     const items: BatchItem[] = files.map((file) => ({ file, status: "selected" }));
     setState({ stage: "batch_running", items });
 

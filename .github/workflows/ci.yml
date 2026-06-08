@@ -5,10 +5,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Secret scan
+        run: scripts/check_committed_secrets.sh
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install deps
         run: pip install -r api/requirements.txt
       - name: Import check
+        env:
+          JWT_SECRET: ci-jwt-secret-with-at-least-thirty-two-chars
+          POSTGRES_PASSWORD: ci-postgres-password
+          MINIO_ACCESS_KEY: ci-minio-access
+          MINIO_SECRET_KEY: ci-minio-secret
         run: python -c "from api.app.main import app; print('app imports OK')"

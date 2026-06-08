@@ -1,3 +1,10 @@
+/**
+ * Shared status and priority badges.
+ *
+ * Centralizing these palettes keeps dashboard, detail, review, and upload
+ * screens consistent when new statuses or risk levels are added.
+ */
+
 import type { DocStatus } from "../api";
 
 const statusStyles: Record<string, string> = {
@@ -25,10 +32,14 @@ const statusLabels: Record<string, string> = {
 };
 
 export function formatStatus(status: string) {
+  /** Convert API status keys into reviewer-friendly labels. */
+
   return statusLabels[status] || status.replace(/_/g, " ");
 }
 
 export default function StatusBadge({ status, pulse = false }: { status: DocStatus | string; pulse?: boolean }) {
+  /** Render document/job status with optional processing pulse. */
+
   const cls = statusStyles[status] || "bg-slate-100 text-slate-700 ring-slate-200";
   const shouldPulse = pulse || status === "queued" || status === "parsing";
   return (
@@ -40,6 +51,8 @@ export default function StatusBadge({ status, pulse = false }: { status: DocStat
 }
 
 export function PriorityBadge({ priority }: { priority?: "P1" | "P2" | "P3" | null }) {
+  /** Render computed backend priority; null means no meaningful priority yet. */
+
   if (!priority) return <span className="text-slate-400">—</span>;
   return (
     <span className={`inline-flex items-center rounded px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${priorityStyles[priority]}`}>

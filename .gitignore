@@ -5,3 +5,10 @@ __pycache__/
 node_modules/
 *.pdf
 api/stress_output/
+secrets/
+
+# pgBackRest logs (emitted to pglogs volume; don't commit)
+*.pgbackrest.log
+
+# Restore test artifacts
+restore-test-*/

@@ -1,3 +1,5 @@
+"""Few-shot retrieval and prompt-message construction."""
+
 from __future__ import annotations
 
 import json
@@ -8,16 +10,22 @@ from ..models import CorrectionExample, DocumentVersion
 
 
 def estimate_tokens(text: str) -> int:
+    """Cheap token estimate used only for local budget control."""
+
     return max(1, len(text) // 4)
 
 
 def truncate_extraction(extraction: dict[str, Any], max_transactions: int = 20) -> dict[str, Any]:
+    """Keep examples compact by limiting transaction rows."""
+
     copy = dict(extraction)
     copy["transactions"] = list(extraction.get("transactions") or [])[:max_transactions]
     return copy
 
 
 def truncate_text(text: str, max_chars: int = 5000) -> str:
+    """Preserve headers while trimming long statement snippets."""
+
     if len(text) <= max_chars:
         return text
     lines = text.splitlines()
@@ -28,6 +36,8 @@ def truncate_text(text: str, max_chars: int = 5000) -> str:
 
 
 def _snippet_from_version(version: DocumentVersion) -> str:
+    """Build the source side of a few-shot example from a corrected version."""
+
     data = version.data or {}
     text = data.get("source_text")
     if text:
@@ -48,6 +58,8 @@ def _snippet_from_version(version: DocumentVersion) -> str:
 
 
 def _query_candidates(db, *, bank: str | None, layout: str | None, exclude_document_id: int | None, limit: int):
+    """Fetch candidate correction examples, optionally scoped by PDF features."""
+
     query = db.query(CorrectionExample).filter(CorrectionExample.failure_category != "no_change")
     if exclude_document_id is not None:
         query = query.filter(CorrectionExample.document_id != exclude_document_id)
@@ -59,6 +71,8 @@ def _query_candidates(db, *, bank: str | None, layout: str | None, exclude_docum
 
 
 def retrieve_few_shot(db, pdf_features: dict[str, Any], *, k: int = 3, exclude_document_id: int | None = None) -> list[dict[str, Any]]:
+    """Retrieve examples from most-specific to broadest match."""
+
     bank = pdf_features.get("bank")
     layout = pdf_features.get("layout")
     candidates = _query_candidates(db, bank=bank, layout=layout, exclude_document_id=exclude_document_id, limit=k)
@@ -89,6 +103,8 @@ def retrieve_few_shot(db, pdf_features: dict[str, Any], *, k: int = 3, exclude_d
 
 
 def build_few_shot_messages(examples: list[dict[str, Any]], *, token_budget: int) -> list[dict[str, str]]:
+    """Convert retrieved examples into alternating user/assistant messages."""
+
     messages: list[dict[str, str]] = []
     used = 0
     for example in examples:

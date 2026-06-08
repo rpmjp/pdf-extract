@@ -1,5 +1,7 @@
 from conftest import AuditLog, ParseJob, ReviewItem, create_document, main
 from app.auth import AuthUser, create_access_token
+from app import celery_helpers, upload_helpers
+from app.routes import documents as documents_router
 
 
 PDF_BYTES = b"%PDF-1.4\n%pytest\n"
@@ -7,7 +9,7 @@ PDF_BYTES = b"%PDF-1.4\n%pytest\n"
 
 def test_upload_accepts_pdf_and_rejects_duplicate(client, auth_headers, monkeypatch):
     stored = {}
-    monkeypatch.setattr(main, "put_object", lambda key, data: stored.update({key: data}))
+    monkeypatch.setattr(upload_helpers, "put_file", lambda key, path: stored.update({key: path}))
 
     response = client.post(
         "/documents",
@@ -19,7 +21,7 @@ def test_upload_accepts_pdf_and_rejects_duplicate(client, auth_headers, monkeypa
     body = response.json()
     assert body["filename"] == "pytest-upload.pdf"
     assert body["status"] == "uploaded"
-    assert list(stored.values()) == [PDF_BYTES]
+    assert list(stored.keys()) == [f"{body['sha256']}.pdf"]
 
     duplicate = client.post(
         "/documents",
@@ -66,6 +68,32 @@ def test_upload_rejects_oversized_pdf(client, auth_headers, monkeypatch):
     assert "too large" in response.json()["detail"]
 
 
+def test_streaming_upload_accepts_10mb_pdf(client, auth_headers, monkeypatch):
+    monkeypatch.setattr(upload_helpers, "put_file", lambda key, path: None)
+    data = b"%PDF-" + (b"x" * (10 * 1024 * 1024))
+
+    response = client.post(
+        "/documents",
+        headers=auth_headers,
+        files={"file": ("pytest-10mb.pdf", data, "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["filename"] == "pytest-10mb.pdf"
+
+
+def test_streaming_upload_rejects_60mb_pdf(client, auth_headers):
+    data = b"%PDF-" + (b"x" * (60 * 1024 * 1024))
+
+    response = client.post(
+        "/documents",
+        headers=auth_headers,
+        files={"file": ("pytest-60mb.pdf", data, "application/pdf")},
+    )
+
+    assert response.status_code == 413
+
+
 def test_dashboard_excludes_rejected_documents(client, db, auth_headers):
     visible = create_document(db, filename="pytest-visible.pdf", status="verified")
     create_document(db, filename="pytest-rejected.pdf", status="rejected")
@@ -105,7 +133,7 @@ def test_documents_query_params_combine(client, db, auth_headers):
 
 
 def test_batch_upload_returns_success_and_file_errors(client, auth_headers, monkeypatch):
-    monkeypatch.setattr(main, "put_object", lambda key, data: None)
+    monkeypatch.setattr(upload_helpers, "put_file", lambda key, path: None)
 
     response = client.post(
         "/documents/batch",
@@ -124,7 +152,7 @@ def test_batch_upload_returns_success_and_file_errors(client, auth_headers, monk
 
 def test_bulk_reparse_success_and_partial_failure(client, db, auth_headers, monkeypatch):
     queued_calls = []
-    monkeypatch.setattr(main.parse_document_task, "apply_async", lambda *args, **kwargs: queued_calls.append((args, kwargs)))
+    monkeypatch.setattr(celery_helpers.parse_document_task, "apply_async", lambda *args, **kwargs: queued_calls.append((args, kwargs)))
     ok = create_document(db, filename="pytest-bulk-reparse-ok.pdf", status="verified")
     busy = create_document(db, filename="pytest-bulk-reparse-busy.pdf", status="parsing")
 
@@ -147,7 +175,7 @@ def test_bulk_reparse_success_and_partial_failure(client, db, auth_headers, monk
 
 
 def test_bulk_approve_success_and_partial_failure(client, db, auth_headers, monkeypatch):
-    monkeypatch.setattr(main, "create_correction_example_for_document", lambda db, doc, actor: None)
+    monkeypatch.setattr(documents_router, "create_correction_example_for_document", lambda db, doc, actor: None)
     ok = create_document(db, filename="pytest-bulk-approve-ok.pdf", status="verified")
     not_verified = create_document(db, filename="pytest-bulk-approve-bad.pdf", status="needs_review")
     db.add(ReviewItem(document_id=ok.id, reason="Open", status="open"))
@@ -255,7 +283,7 @@ def test_bulk_actions_enforce_roles(client, db):
 
 def test_get_document_file_records_view_audit(client, db, auth_headers, monkeypatch):
     doc = create_document(db, filename="pytest-view-file.pdf", status="verified")
-    monkeypatch.setattr(main, "get_object", lambda key: PDF_BYTES)
+    monkeypatch.setattr(documents_router, "get_object", lambda key: PDF_BYTES)
 
     response = client.get(f"/documents/{doc.id}/file", headers=auth_headers)
 

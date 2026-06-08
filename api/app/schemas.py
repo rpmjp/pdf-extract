@@ -1,8 +1,10 @@
+"""Pydantic schemas used at the LLM/API boundary."""
 from typing import Literal
 from pydantic import BaseModel, model_validator
 
 
 class Transaction(BaseModel):
+    """Normalized transaction shape returned by the extractor."""
     date: str
     description: str
     amount: float
@@ -20,6 +22,7 @@ class Transaction(BaseModel):
 
 
 class StatementExtraction(BaseModel):
+    """Full structured representation of one bank statement."""
     account_holder: str | None = None
     account_number: str | None = None
     statement_period: str | None = None

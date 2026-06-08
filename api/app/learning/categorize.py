@@ -1,3 +1,10 @@
+"""Heuristics for labeling reviewer corrections by failure mode.
+
+The labels are intentionally deterministic. They let the admin UI and eval
+reports say "we keep seeing sign flips" or "blank descriptions are common"
+without asking an LLM to classify its own mistakes.
+"""
+
 from __future__ import annotations
 
 from math import isclose
@@ -14,6 +21,8 @@ DOC_FIELDS = {
 
 
 def _field_from_path(path: str) -> str:
+    """Collapse a JSON diff path down to the edited field name."""
+
     if path.startswith("root."):
         return path.split(".", 1)[1]
     if "." in path:
@@ -22,6 +31,8 @@ def _field_from_path(path: str) -> str:
 
 
 def _transaction_count(original_extraction: dict[str, Any], diffs: list[dict[str, Any]]) -> tuple[int, int]:
+    """Infer before/after transaction counts from append/delete diff rows."""
+
     original = len(original_extraction.get("transactions") or [])
     corrected = original
     for diff in diffs:
@@ -36,6 +47,8 @@ def _transaction_count(original_extraction: dict[str, Any], diffs: list[dict[str
 
 
 def _amount_decimal_factor(before: Any, after: Any) -> bool:
+    """Detect common decimal-place extraction mistakes such as 12.34 vs 1234."""
+
     try:
         before_value = abs(float(before))
         after_value = abs(float(after))
@@ -48,6 +61,8 @@ def _amount_decimal_factor(before: Any, after: Any) -> bool:
 
 
 def _has_merged_description(original_extraction: dict[str, Any], diffs: list[dict[str, Any]]) -> bool:
+    """Detect cases where two adjacent descriptions were merged into one row."""
+
     original_txns = original_extraction.get("transactions") or []
     corrected_descriptions = [
         str(diff.get("after", "")).lower().replace(" ", "")
@@ -65,6 +80,8 @@ def _has_merged_description(original_extraction: dict[str, Any], diffs: list[dic
 
 
 def categorize_failure(original_extraction: dict[str, Any], field_diffs: list[dict[str, Any]]) -> str:
+    """Return the highest-priority failure category for a correction example."""
+
     if not field_diffs:
         return "no_change"
 

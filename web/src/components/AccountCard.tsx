@@ -1,11 +1,22 @@
+/**
+ * Account-level extraction summary.
+ *
+ * Reviewers use this card to verify statement-level fields before inspecting
+ * row-level transactions.
+ */
+
 import type { DocumentDetail } from "../api";
 
 function formatMoney(value: number | null) {
+  /** Display missing balances distinctly from zero-dollar balances. */
+
   if (value === null) return "—";
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(value);
 }
 
 function Field({ label, value }: { label: string; value: string | number | null }) {
+  /** Compact label/value pair used by account metadata fields. */
+
   return (
     <div>
       <dt className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</dt>
@@ -15,6 +26,8 @@ function Field({ label, value }: { label: string; value: string | number | null 
 }
 
 export default function AccountCard({ document }: { document: DocumentDetail }) {
+  /** Render holder, account, period, and balance fields. */
+
   return (
     <section className="rounded-lg border border-slate-200 bg-white p-5">
       <h2 className="text-base font-semibold text-slate-900">Account info</h2>

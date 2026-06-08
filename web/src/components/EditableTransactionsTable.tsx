@@ -1,9 +1,20 @@
+/**
+ * Reviewer transaction editor.
+ *
+ * Draft edits stay local until a reviewer saves one row or saves all changed
+ * rows. The component compares drafts with persisted transactions for dirty
+ * state, while originalTransactions lets reviewers see what the LLM first
+ * extracted before any human correction.
+ */
+
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, type ReviewItem, type Transaction, type TransactionUpdate } from "../api";
 import EditableRow from "./EditableRow";
 
 function toFormState(transaction: Transaction): TransactionUpdate {
+  /** Convert an API transaction into the mutation payload shape. */
+
   return {
     date: transaction.date,
     description: transaction.description,
@@ -14,6 +25,8 @@ function toFormState(transaction: Transaction): TransactionUpdate {
 }
 
 function isDirty(form: TransactionUpdate, transaction: Transaction) {
+  /** Detect whether a draft row differs from the persisted row. */
+
   return (
     form.date !== transaction.date ||
     form.description !== transaction.description ||
@@ -24,6 +37,8 @@ function isDirty(form: TransactionUpdate, transaction: Transaction) {
 }
 
 function issueForRow(items: ReviewItem[], index: number) {
+  /** Attach row-level review messages when the backend reason names a row. */
+
   const rowToken = `transactions[${index + 1}]`;
   const zeroToken = `transactions[${index}]`;
   const reason = items.find((item) => item.reason.includes(rowToken) || item.reason.includes(zeroToken) || (item.reason.toLowerCase().includes("row") && item.reason.toLowerCase().includes("balance")));
@@ -46,10 +61,12 @@ export default function EditableTransactionsTable({
   const [drafts, setDrafts] = useState<Record<number, TransactionUpdate>>({});
 
   useEffect(() => {
+    // Reset drafts whenever the server sends a fresh document payload.
     setDrafts(Object.fromEntries(transactions.map((transaction) => [transaction.id!, toFormState(transaction)])));
   }, [transactions]);
 
   const dirtyIds = useMemo(
+    // Dirty rows drive the Save all/Discard all controls.
     () => transactions.filter((transaction) => transaction.id && drafts[transaction.id] && isDirty(drafts[transaction.id], transaction)).map((transaction) => transaction.id!),
     [drafts, transactions],
   );
@@ -63,12 +80,16 @@ export default function EditableTransactionsTable({
   });
 
   const saveOne = (transactionId: number) => {
+    /** Persist a single draft row. */
+
     const payload = drafts[transactionId];
     if (!payload) return;
     updateTransaction.mutate({ transactionId, payload });
   };
 
   const saveAll = async () => {
+    /** Persist all dirty rows sequentially so failures identify one row clearly. */
+
     for (const transactionId of dirtyIds) {
       const payload = drafts[transactionId];
       if (payload) await updateTransaction.mutateAsync({ transactionId, payload });
@@ -77,6 +98,8 @@ export default function EditableTransactionsTable({
   };
 
   const discardAll = () => {
+    /** Restore all drafts to the latest persisted transaction values. */
+
     setDrafts(Object.fromEntries(transactions.map((transaction) => [transaction.id!, toFormState(transaction)])));
   };
 

@@ -1,3 +1,10 @@
+"""LLM client and extraction prompt.
+
+This module owns prompt construction and response parsing into
+``StatementExtraction``.  Pipeline decisions such as reconciliation, confidence,
+rule correction, and persistence live in the worker so extraction remains a
+small, testable boundary.
+"""
 import json
 import urllib.request
 from .learning.fewshot import build_few_shot_messages
@@ -57,6 +64,7 @@ SECOND PASS INSTRUCTIONS
 
 
 def _chat(payload) -> StatementExtraction:
+    """Send a chat request to the local Ollama-compatible endpoint."""
     req = urllib.request.Request(
         OLLAMA_URL,
         data=json.dumps(payload).encode(),
@@ -69,6 +77,7 @@ def _chat(payload) -> StatementExtraction:
 
 
 def extract_statement(text: str, variant: str = "primary", few_shot_examples: list[dict] | None = None) -> StatementExtraction:
+    """Extract statement data from the text layer of a digital PDF."""
     prompt = ENSEMBLE_SYSTEM_PROMPT if variant == "ensemble" else SYSTEM_PROMPT
     user_text = (
         "Independently extract this bank statement for cross-checking:\n\n"
@@ -89,6 +98,7 @@ def extract_statement(text: str, variant: str = "primary", few_shot_examples: li
 
 
 def extract_statement_from_images(images_b64: list[str], variant: str = "primary", few_shot_examples: list[dict] | None = None) -> StatementExtraction:
+    """Extract statement data from rendered page images for scanned PDFs."""
     prompt = ENSEMBLE_SYSTEM_PROMPT if variant == "ensemble" else SYSTEM_PROMPT
     user_text = (
         "Independently extract this bank statement from the page image(s) for cross-checking."

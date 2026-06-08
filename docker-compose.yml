@@ -1,6 +1,16 @@
 services:
   postgres:
-    image: postgres:16
+    build:
+      context: ops/postgres
+    # Enable WAL archiving so pgBackRest can maintain a continuous backup chain.
+    # archive_timeout=60 means WAL is archived at most 60 s after the last write
+    # even if the segment hasn't filled — keeps RPO ≤ ~1 minute.
+    command: >
+      postgres
+      -c wal_level=replica
+      -c archive_mode=on
+      -c archive_command='pgbackrest --stanza=main archive-push %p'
+      -c archive_timeout=60
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -9,11 +19,36 @@ services:
       - "${POSTGRES_PORT}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - pgbackups:/var/lib/pgbackrest
+      - pglogs:/var/log/pgbackrest
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # pgBackRest scheduled backup sidecar.
+  # Shares the pgdata volume (read-only) to read data files directly,
+  # and the pgbackups volume for the backup repository.
+  # Connects to postgres via TCP for checkpoint control (pg_backup_start/stop).
+  pgbackrest-cron:
+    build:
+      context: ops/postgres
+    entrypoint: ["/usr/local/bin/pgbackrest-cron-entrypoint.sh"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data:ro
+      - pgbackups:/var/lib/pgbackrest
+      - pglogs:/var/log/pgbackrest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
   redis:
     image: redis:7-alpine
@@ -25,12 +60,24 @@ services:
       timeout: 3s
       retries: 5
 
+  clamav:
+    image: clamav/clamav:latest
+    ports:
+      - "3310:3310"
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
   minio:
     image: minio/minio
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY}
     ports:
       - "${MINIO_API_PORT}:9000"
       - "${MINIO_CONSOLE_PORT}:9001"
@@ -41,6 +88,46 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # Secondary MinIO instance on a separate volume — simulates multi-AZ durability.
+  # minio-sync mirrors all objects from the primary bucket continuously.
+  minio-replica:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes:
+      - miniodata-replica:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Continuous mirror: primary bucket → replica bucket.
+  # Uses `mc mirror --watch` for near-real-time replication (RPO ≈ seconds).
+  minio-sync:
+    image: minio/mc
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set primary http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+        mc alias set replica http://minio-replica:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD} &&
+        mc mb --ignore-existing primary/${MINIO_BUCKET:-documents} &&
+        mc mb --ignore-existing replica/${MINIO_BUCKET:-documents}-backup &&
+        echo 'Starting continuous mirror primary → replica...' &&
+        mc mirror --watch primary/${MINIO_BUCKET:-documents} replica/${MINIO_BUCKET:-documents}-backup
+      "
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-documents}
+    depends_on:
+      minio:
+        condition: service_healthy
+      minio-replica:
+        condition: service_healthy
+    restart: unless-stopped
 
   api:
     build: ./api
@@ -57,6 +144,7 @@ services:
       MINIO_PORT: 9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      CLAMAV_HOST: clamav
     volumes:
       - ./api:/app
     depends_on:
@@ -81,6 +169,7 @@ services:
       MINIO_PORT: 9000
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
+      CLAMAV_HOST: clamav
     volumes:
       - ./api:/app
     depends_on:
@@ -112,6 +201,24 @@ services:
     depends_on:
       - api
 
+  # ── Optional log-shipping sidecar ──────────────────────────────────────────
+  # Activate with:  docker compose --profile logging up -d promtail
+  # Requires:       LOKI_ENDPOINT env var pointing at a Loki instance
+  # Swappable:      replace this service with Filebeat (ops/filebeat/) or any
+  #                 other shipper — the pipeline_stages in promtail.yml only
+  #                 parse stdout lines; the app's LOG_FORMAT=json env var
+  #                 controls whether structured fields are emitted.
+  promtail:
+    image: grafana/promtail:3.3.2
+    profiles: ["logging"]
+    command: -config.file=/etc/promtail/config.yml -config.expand-env=true
+    environment:
+      LOKI_ENDPOINT: ${LOKI_ENDPOINT:-http://loki:3100}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./ops/promtail/promtail.yml:/etc/promtail/config.yml:ro
+    restart: unless-stopped
+
   grafana:
     image: grafana/grafana:11.4.0
     ports:
@@ -129,5 +236,8 @@ services:
 
 volumes:
   pgdata:
+  pgbackups:       # pgBackRest backup repository (daily full + WAL archive)
+  pglogs:          # pgBackRest logs
   miniodata:
+  miniodata-replica:   # Secondary MinIO volume — separate spindle / AZ in prod
   grafanadata:

@@ -1,3 +1,11 @@
+/**
+ * Source PDF viewer.
+ *
+ * react-pdf requires a matching PDF.js worker bundle and its annotation/text
+ * layer CSS. This component owns viewer-only state: page, zoom, rotation,
+ * fit-width sizing, thumbnails, and browser text search.
+ */
+
 import { useEffect, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import workerSrc from "../../node_modules/react-pdf/node_modules/pdfjs-dist/build/pdf.worker.min.mjs?url";
@@ -24,6 +32,7 @@ export default function PdfViewer({ url }: PdfViewerProps) {
   const canGoForward = pageNumber < numPages;
 
   useEffect(() => {
+    // Fit-width mode needs the rendered panel width, not the full viewport.
     if (!viewerRef.current) return;
     const observer = new ResizeObserver(([entry]) => setViewerWidth(entry.contentRect.width));
     observer.observe(viewerRef.current);
@@ -31,6 +40,8 @@ export default function PdfViewer({ url }: PdfViewerProps) {
   }, []);
 
   const runFind = () => {
+    /** Use the browser's built-in find API against react-pdf's text layer. */
+
     if (!search.trim()) return;
     const find = (window as Window & { find?: (text: string, caseSensitive?: boolean, backwards?: boolean, wrap?: boolean) => boolean }).find;
     find?.(search.trim(), false, false, true);
@@ -153,24 +164,24 @@ export default function PdfViewer({ url }: PdfViewerProps) {
         </div>
         <div ref={viewerRef} className="min-h-0 overflow-auto p-4">
           <div className="flex min-h-full justify-center">
-          <Document
-            file={url}
-            loading={<p className="text-sm text-slate-500">Loading PDF...</p>}
-            error={<p className="text-sm text-rose-600">Failed to load PDF.</p>}
-            onLoadSuccess={({ numPages: nextNumPages }) => {
-              setNumPages(nextNumPages);
-              setPageNumber(1);
-            }}
-          >
-            <Page
-              pageNumber={pageNumber}
-              scale={fitWidth ? undefined : scale}
-              width={fitWidth && viewerWidth ? Math.max(320, viewerWidth - 40) : undefined}
-              rotate={rotation}
-              renderTextLayer
-              renderAnnotationLayer
-            />
-          </Document>
+            <Document
+              file={url}
+              loading={<p className="text-sm text-slate-500">Loading PDF...</p>}
+              error={<p className="text-sm text-rose-600">Failed to load PDF.</p>}
+              onLoadSuccess={({ numPages: nextNumPages }) => {
+                setNumPages(nextNumPages);
+                setPageNumber(1);
+              }}
+            >
+              <Page
+                pageNumber={pageNumber}
+                scale={fitWidth ? undefined : scale}
+                width={fitWidth && viewerWidth ? Math.max(320, viewerWidth - 40) : undefined}
+                rotate={rotation}
+                renderTextLayer
+                renderAnnotationLayer
+              />
+            </Document>
           </div>
         </div>
       </div>

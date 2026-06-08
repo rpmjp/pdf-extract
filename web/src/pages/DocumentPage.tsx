@@ -1,3 +1,11 @@
+/**
+ * Document trust view and review view.
+ *
+ * The left side renders the source PDF and the right side renders extraction,
+ * reconciliation, review issues, edit controls, and audit history. This is the
+ * primary page for validating that parsed data matches the original statement.
+ */
+
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useParams } from "react-router-dom";
 import AccountCard from "../components/AccountCard";
@@ -12,6 +20,8 @@ import TransactionsTable from "../components/TransactionsTable";
 import { api, getAuthToken, type DocumentDetail, type ReviewItem } from "../api";
 
 function issueTarget(reason: string) {
+  /** Map review-item text to the UI section that should be highlighted. */
+
   const lower = reason.toLowerCase();
   if (lower.includes("opening") || lower.includes("closing") || lower.includes("account") || lower.includes("holder") || lower.includes("period")) return "account-info";
   if (lower.includes("transaction") || lower.includes("row") || lower.includes("balance")) return "transactions";
@@ -20,10 +30,14 @@ function issueTarget(reason: string) {
 }
 
 function hasIssueFor(items: ReviewItem[], target: string) {
+  /** Return whether any open issue should visually call out a section. */
+
   return items.some((item) => issueTarget(item.reason) === target);
 }
 
 function originalTransactions(document: DocumentDetail) {
+  /** Find the earliest non-review snapshot for before/after edit comparison. */
+
   const candidates = document.versions
     .filter((version) => version.source !== "review_edit" && version.data.transactions?.length)
     .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
@@ -31,6 +45,8 @@ function originalTransactions(document: DocumentDetail) {
 }
 
 function TrustSummary({ document }: { document: DocumentDetail }) {
+  /** Lead with the reviewer decision signals before lower-level details. */
+
   const failedChecks = document.reconciliation.checks.filter((check) => !check.passed);
   const hasOpenReview = document.review_items.some((item) => item.status === "open");
   const confidence = document.confidence_score;
@@ -80,6 +96,8 @@ function TrustSummary({ document }: { document: DocumentDetail }) {
 }
 
 function ReviewIssues({ items }: { items: ReviewItem[] }) {
+  /** Render an actionable checklist with jump links into the trust view. */
+
   if (!items.length) return null;
   return (
     <section className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-amber-950">
@@ -112,6 +130,7 @@ export default function DocumentPage() {
   const searchParams = new URLSearchParams(location.search);
   const isEditing = location.pathname.endsWith("/review") || searchParams.get("edit") === "1";
   const { data, isLoading, error } = useQuery({
+    // In-flight documents poll until the worker reaches a terminal state.
     queryKey: ["document", id],
     queryFn: async () => (await api.get<DocumentDetail>(`/documents/${id}`)).data,
     enabled: Boolean(id),
@@ -125,6 +144,8 @@ export default function DocumentPage() {
   if (error || !data || !id) return <p className="text-rose-600">Failed to load document.</p>;
 
   const token = getAuthToken();
+  // The PDF viewer makes range requests directly to the API. The query-token is
+  // a browser-viewer compatibility path; normal API calls still use Bearer auth.
   const pdfUrl = `${api.defaults.baseURL}/documents/${id}/file${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   const isProcessing = data.status === "queued" || data.status === "parsing";
   const hasFailed = data.status === "failed";

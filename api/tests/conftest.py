@@ -13,14 +13,23 @@ if str(ROOT) not in sys.path:
 
 os.environ.setdefault("POSTGRES_HOST", "localhost")
 os.environ.setdefault("POSTGRES_PORT", "5435")
+os.environ.setdefault("POSTGRES_PASSWORD", "pytest-postgres-password")
 os.environ.setdefault("REDIS_HOST", "localhost")
 os.environ.setdefault("REDIS_PORT", "6380")
 os.environ.setdefault("MINIO_HOST", "localhost")
 os.environ.setdefault("MINIO_PORT", "9000")
+os.environ.setdefault("MINIO_ACCESS_KEY", "pytest-minio-access")
+os.environ.setdefault("MINIO_SECRET_KEY", "pytest-minio-secret")
+os.environ.setdefault("JWT_SECRET", "pytest-jwt-secret-with-at-least-thirty-two-chars")
+# 32-byte all-zeros key for tests (never use in production)
+os.environ.setdefault("COLUMN_ENCRYPTION_KEY", "00" * 32)
+# ClamAV disabled by default in tests; individual tests mock scanner calls
+os.environ.setdefault("CLAMAV_ENABLED", "false")
+os.environ.setdefault("MINIO_SSE_ENABLED", "false")
 
 from app import main  # noqa: E402
 from app.auth import AuthUser, create_access_token  # noqa: E402
-from app.models import AuditLog, CorrectionExample, Document, DocumentVersion, EvalRun, EvalSetMember, ParseJob, ReviewItem, Transaction  # noqa: E402
+from app.models import AuditLog, CorrectionExample, Document, DocumentVersion, EvalRun, EvalSetMember, ParseJob, RefreshToken, ReviewItem, Transaction  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -55,7 +64,8 @@ def auth_headers():
 def cleanup_pytest_rows():
     with main.engine.begin() as conn:
         conn.execute(text("DELETE FROM eval_runs WHERE eval_set_version LIKE 'pytest-%'"))
-        for table in ("eval_set_members", "correction_examples", "audit_log", "document_versions", "parse_jobs", "transactions", "review_items"):
+        conn.execute(text("DELETE FROM refresh_tokens WHERE created_from_ip = 'pytest'"))
+        for table in ("eval_set_members", "correction_examples", "document_versions", "parse_jobs", "transactions", "review_items"):
             conn.execute(
                 text(
                     f"""
@@ -130,6 +140,7 @@ __all__ = [
     "EvalRun",
     "EvalSetMember",
     "ParseJob",
+    "RefreshToken",
     "ReviewItem",
     "Transaction",
     "add_statement_fields",

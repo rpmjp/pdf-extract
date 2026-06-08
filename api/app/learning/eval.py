@@ -1,3 +1,10 @@
+"""Offline evaluation runner for extraction quality.
+
+Eval runs replay the current extraction stack against locked document versions.
+That makes prompt, rule, and few-shot changes measurable without modifying the
+production documents being reviewed by users.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -27,6 +34,8 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def _exact(left: Any, right: Any) -> bool:
+    """Compare fields with cent-level tolerance for money values."""
+
     if isinstance(left, float) or isinstance(right, float):
         try:
             return abs(float(left) - float(right)) < 0.01
@@ -36,10 +45,14 @@ def _exact(left: Any, right: Any) -> bool:
 
 
 def _description_similarity(left: str, right: str) -> float:
+    """Return a fuzzy score for transaction descriptions."""
+
     return SequenceMatcher(None, left or "", right or "").ratio()
 
 
 def compare_extractions(predicted: dict, truth: dict) -> dict:
+    """Compute row/field accuracy for one predicted extraction."""
+
     truth_txns = truth.get("transactions") or []
     predicted_txns = predicted.get("transactions") or []
     field_counts = {field: {"correct": 0, "total": 0} for field in ["date", "description", "amount", "type", "balance"]}
@@ -65,6 +78,8 @@ def compare_extractions(predicted: dict, truth: dict) -> dict:
 
 
 def run_extraction_for_document(db, doc: Document, *, use_few_shot: bool = False) -> tuple[dict, dict, float, dict[str, int]]:
+    """Run the current parser stack for one document under eval conditions."""
+
     pdf_bytes = get_object(doc.minio_key)
     extracted = classify_and_extract(pdf_bytes)
     few_shot_examples = []
@@ -90,6 +105,8 @@ def run_extraction_for_document(db, doc: Document, *, use_few_shot: bool = False
 
 
 def run_eval(eval_set_version: str, *, use_few_shot: bool = False) -> dict:
+    """Execute an eval set and append an EvalRun with aggregate metrics."""
+
     db = SessionLocal()
     try:
         members = db.query(EvalSetMember).filter_by(eval_set_version=eval_set_version).order_by(EvalSetMember.id).all()
@@ -142,6 +159,8 @@ def run_eval(eval_set_version: str, *, use_few_shot: bool = False) -> dict:
 
 
 def main():
+    """CLI entry point for running an eval set."""
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--set-version", required=True)
     parser.add_argument("--few-shot", choices=["on", "off"], default="off")

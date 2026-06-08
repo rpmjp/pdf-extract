@@ -217,6 +217,23 @@ test("login shows dashboard documents", async ({ page }) => {
   await expect(row.getByText("42%")).toBeVisible();
 });
 
+test("theme switcher forces light and dark root themes", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign in" }).click();
+
+  await page.getByRole("button", { name: "Dark" }).click();
+  await expect(page.locator("html")).toHaveClass(/dark/);
+
+  await page.getByRole("button", { name: "Light" }).click();
+  await expect(page.locator("html")).toHaveClass(/light/);
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  await expect(page.locator("body > div > div").first()).toHaveCSS("background-color", "rgb(245, 247, 251)");
+  await expect(page.locator("header")).toHaveCSS("background-color", "rgba(255, 255, 255, 0.95)");
+  await expect(page.getByRole("button", { name: "System" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Dark" })).toBeVisible();
+});
+
 test("dashboard renders backend priority pills", async ({ page }) => {
   await mockApi(page);
   await page.goto("/");
@@ -406,6 +423,20 @@ test("confidence insights page renders KPIs, alerts, charts, and lowest table", 
   await expect(page.getByRole("row", { name: /statement_failed\.pdf/ })).toBeVisible();
   await page.getByRole("row", { name: /statement_failed\.pdf/ }).click();
   await expect(page).toHaveURL(/\/documents\/10\/review/);
+});
+
+test("insights alert View link opens filtered documents dashboard", async ({ page }) => {
+  await mockApi(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await page.goto("/insights/confidence");
+
+  await page.getByRole("button", { name: /2 docs aged >24h in Needs Review.*View/ }).click();
+
+  await expect(page).toHaveURL(/\/documents\?filter=needs_review/);
+  await expect(page.getByRole("heading", { name: "Documents" })).toBeVisible();
+  await expect(page.getByRole("row", { name: /statement_noisy\.pdf/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /statement_verified\.pdf/ })).toHaveCount(0);
 });
 
 test("insights range selector updates URL", async ({ page }) => {

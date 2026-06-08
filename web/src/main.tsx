@@ -1,3 +1,10 @@
+/**
+ * React entrypoint.
+ *
+ * The app is wrapped with TanStack Query for API caching/polling and
+ * BrowserRouter for client-side document/review/upload routes.
+ */
+
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";

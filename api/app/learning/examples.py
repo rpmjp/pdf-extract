@@ -1,3 +1,10 @@
+"""Create correction examples from reviewer-approved documents.
+
+Correction examples are the durable learning artifact: original extraction,
+corrected extraction, field-level diffs, PDF features, and a failure category.
+They are append-only and later feed eval sets and few-shot retrieval.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -18,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 def _current_extraction(doc: Document, transactions: list[Transaction]) -> dict[str, Any]:
+    """Serialize the document's current persisted fields into extraction shape."""
+
     return {
         "account_holder": doc.account_holder,
         "account_number": doc.account_number,
@@ -38,6 +47,8 @@ def _current_extraction(doc: Document, transactions: list[Transaction]) -> dict[
 
 
 def extraction_from_version(version: DocumentVersion) -> dict[str, Any]:
+    """Normalize either old or new version payloads to extraction shape."""
+
     data = version.data or {}
     if "extraction" in data:
         return data["extraction"]
@@ -53,6 +64,8 @@ def extraction_from_version(version: DocumentVersion) -> dict[str, Any]:
 
 
 def find_original_version(db, doc_id: int) -> DocumentVersion | None:
+    """Find the earliest LLM snapshot to compare against reviewer corrections."""
+
     original = (
         db.query(DocumentVersion)
         .filter_by(document_id=doc_id, source="llm_parse")
@@ -65,6 +78,8 @@ def find_original_version(db, doc_id: int) -> DocumentVersion | None:
 
 
 def diff_extractions(original: dict[str, Any], corrected: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return field-level JSON-ish diffs between two extraction snapshots."""
+
     diffs: list[dict[str, Any]] = []
     for field in DOC_FIELDS:
         before = original.get(field)
@@ -90,6 +105,8 @@ def diff_extractions(original: dict[str, Any], corrected: dict[str, Any]) -> lis
 
 
 def _infer_bank(text: str, doc: Document) -> str:
+    """Infer a coarse bank/source label for retrieval grouping."""
+
     for line in text.splitlines():
         stripped = line.strip()
         if stripped and not stripped.lower().startswith(("account", "statement", "opening", "closing", "date")):
@@ -100,6 +117,8 @@ def _infer_bank(text: str, doc: Document) -> str:
 
 
 def _infer_layout(text: str) -> str:
+    """Infer whether the PDF is tabular, prose-like, or mixed."""
+
     lower = text.lower()
     has_table = "date" in lower and ("debit" in lower or "credit" in lower) and "balance" in lower
     has_prose = " credited " in lower or " debited " in lower or lower.count(" on ") >= 2
@@ -113,6 +132,8 @@ def _infer_layout(text: str) -> str:
 
 
 def compute_pdf_features(doc: Document, transaction_count: int) -> dict[str, Any]:
+    """Extract lightweight retrieval/eval features from the source PDF."""
+
     try:
         pdf_bytes = get_object(doc.minio_key)
         page_count = fitz.open(stream=pdf_bytes, filetype="pdf").page_count
@@ -137,6 +158,8 @@ def compute_pdf_features(doc: Document, transaction_count: int) -> dict[str, Any
 
 
 def create_correction_example_for_document(db, doc: Document, actor: str) -> CorrectionExample | None:
+    """Append learning artifacts when a reviewer approves a document."""
+
     logger.warning("create_correction_example_for_document entered doc_id=%s actor=%s", doc.id, actor)
     existing = db.query(CorrectionExample).filter_by(document_id=doc.id).first()
     if existing:
