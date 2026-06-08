@@ -28,7 +28,7 @@ An enterprise-grade bank statement extraction platform. Upload scanned or digita
 
 ## What It Solves
 
-Banks produce statements as PDFs. Processing them at scale — reconciling balances, extracting every transaction, validating totals — is labor-intensive when done manually and unreliable when done with naive string parsing. The format varies by institution: some are machine-readable (embedded text), others are scanned images. No single regex or template covers the space.
+Banks produce statements as PDFs. Processing them at scale - reconciling balances, extracting every transaction, validating totals - is labor-intensive when done manually and unreliable when done with naive string parsing. The format varies by institution: some are machine-readable (embedded text), others are scanned images. No single regex or template covers the space.
 
 This project uses a vision-capable LLM as the extraction engine, wraps it with deterministic guardrails (balance reconciliation, sign correction, confidence scoring), stores every result immutably, and provides a human-in-the-loop review queue for anything the model is uncertain about. Human corrections are captured as structured examples and reused as few-shot context on future extractions from the same institution.
 
@@ -91,7 +91,7 @@ SQLAlchemy's TypeDecorator gives us transparent column-level encryption ([`api/a
 
 FastAPI background tasks are tied to the request process. If the API restarts mid-parse, the job is lost. Celery tasks are durable: Redis stores the task message until a worker ACKs completion. Workers can be scaled independently of the API. The Redis result backend lets the API poll job state without a long-lived connection.
 
-Worker concurrency is set to 1 per replica ([`docker-compose.yml:160`](docker-compose.yml#L160)). LLM inference is GPU-bound and sequential — two tasks competing for the same GPU thrash worse than taking turns. To increase throughput, add worker replicas; do not raise concurrency. See [Operations → Scaling](#scaling).
+Worker concurrency is set to 1 per replica ([`docker-compose.yml:160`](docker-compose.yml#L160)). LLM inference is GPU-bound and sequential - two tasks competing for the same GPU thrash worse than taking turns. To increase throughput, add worker replicas; do not raise concurrency. See [Operations → Scaling](#scaling).
 
 ### Ollama with qwen2.5vl:7b (default)
 
@@ -103,7 +103,7 @@ PDFs are not stored in Postgres (TOAST fragmentation, backup size, streaming com
 
 ### React + TanStack Query + Tailwind
 
-TanStack Query handles cache invalidation, background refetching, and loading states declaratively — the review queue and job polling patterns map directly to its `refetchInterval` and `invalidateQueries` API. Tailwind keeps styling co-located with markup and eliminates dead CSS. Vite's HMR makes the development loop fast enough that we don't need a separate design system.
+TanStack Query handles cache invalidation, background refetching, and loading states declaratively - the review queue and job polling patterns map directly to its `refetchInterval` and `invalidateQueries` API. Tailwind keeps styling co-located with markup and eliminates dead CSS. Vite's HMR makes the development loop fast enough that we don't need a separate design system.
 
 ### pgBackRest for Postgres backups
 
@@ -117,7 +117,7 @@ The schema is managed with Alembic. Eleven migrations cover the full history fro
 
 ### Core Tables
 
-**`documents`** — One row per uploaded PDF.
+**`documents`** - One row per uploaded PDF.
 
 | Column | Notes |
 |--------|-------|
@@ -136,7 +136,7 @@ The schema is managed with Alembic. Eleven migrations cover the full history fro
 | `deleted_at` | Set on retention tombstone; account fields cleared |
 | `deletion_policy_id` | FK to active retention policy |
 
-**`transactions`** — One row per line item extracted from a document.
+**`transactions`** - One row per line item extracted from a document.
 
 | Column | Notes |
 |--------|-------|
@@ -147,7 +147,7 @@ The schema is managed with Alembic. Eleven migrations cover the full history fro
 | `balance` | Running balance after this transaction |
 | `confidence` | Per-transaction score |
 
-**`audit_log`** — Append-only action history with SHA-256 hash chain.
+**`audit_log`** - Append-only action history with SHA-256 hash chain.
 
 | Column | Notes |
 |--------|-------|
@@ -158,15 +158,15 @@ The schema is managed with Alembic. Eleven migrations cover the full history fro
 
 The chain starts from a genesis hash. `GET /admin/audit/verify` walks every row and re-derives each hash. Any gap or mismatch surfaces as a tampering indicator. See [`api/app/audit_chain.py`](api/app/audit_chain.py).
 
-**`parse_jobs`** — One row per Celery task. The row id equals the Celery task UUID so status can be retrieved from either Celery's result backend or the database.
+**`parse_jobs`** - One row per Celery task. The row id equals the Celery task UUID so status can be retrieved from either Celery's result backend or the database.
 
-**`document_versions`** — Immutable extraction snapshots. Every parse result is written here with `source="llm_parse"`. Every approved edit creates a `source="review_edit"` snapshot. The original extraction is never overwritten; it's always recoverable.
+**`document_versions`** - Immutable extraction snapshots. Every parse result is written here with `source="llm_parse"`. Every approved edit creates a `source="review_edit"` snapshot. The original extraction is never overwritten; it's always recoverable.
 
-**`correction_examples`** — Captures diffs between original LLM output and final approved version. Fields: `field_diffs` (JSON path → before/after), `failure_category` (sign_flip, amount_off_by_decimal, description_merged, …), `pdf_features` (bank, layout type, page count). Used for few-shot retrieval. See [`api/app/learning/`](api/app/learning/).
+**`correction_examples`** - Captures diffs between original LLM output and final approved version. Fields: `field_diffs` (JSON path → before/after), `failure_category` (sign_flip, amount_off_by_decimal, description_merged, …), `pdf_features` (bank, layout type, page count). Used for few-shot retrieval. See [`api/app/learning/`](api/app/learning/).
 
-**`users`** / **`refresh_tokens`** — Auth tables. Users have a `roles` array. Refresh tokens store `token_hash` (bcrypt), not the raw token, plus `ip_address` for audit. Token rotation on every `/auth/refresh` call.
+**`users`** / **`refresh_tokens`** - Auth tables. Users have a `roles` array. Refresh tokens store `token_hash` (bcrypt), not the raw token, plus `ip_address` for audit. Token rotation on every `/auth/refresh` call.
 
-**`retention_policies`** — Configurable per-status rules (e.g., delete `rejected` documents after 90 days). Enforced daily by a Celery Beat task. Deletion is a tombstone: MinIO object deleted, account fields nulled, `deleted_at` set — the row and audit trail remain.
+**`retention_policies`** - Configurable per-status rules (e.g., delete `rejected` documents after 90 days). Enforced daily by a Celery Beat task. Deletion is a tombstone: MinIO object deleted, account fields nulled, `deleted_at` set - the row and audit trail remain.
 
 ---
 
@@ -183,7 +183,7 @@ The chain starts from a genesis hash. `GET /admin/audit/verify` walks every row 
 
 2. Queue
    POST /documents/{id}/parse
-   ├── enqueue_parse_for_document() — idempotent; returns existing job if already pending
+   ├── enqueue_parse_for_document() - idempotent; returns existing job if already pending
    ├── insert ParseJob row (status=queued)
    └── push Celery task to Redis
 
@@ -191,8 +191,8 @@ The chain starts from a genesis hash. `GET /admin/audit/verify` walks every row 
 
 4. Human Review (if status=needs_review or failed)
    GET /review-queue
-   GET /documents/{id}          — view extraction, reconciliation, versions, audit log
-   PATCH /documents/{id}/transactions/{txn_id}  — edit a transaction
+   GET /documents/{id}          - view extraction, reconciliation, versions, audit log
+   PATCH /documents/{id}/transactions/{txn_id}  - edit a transaction
    POST /documents/{id}/approve / reject
 
 5. Approval Learning Capture
@@ -250,7 +250,7 @@ If `few_shot_enabled` is set, [`learning/fewshot.py:retrieve_few_shot()`](api/ap
 
 ### Step 3: Reconciliation and Sign Correction
 
-[`reconcile.py:correct_signs_from_balances()`](api/app/reconcile.py) uses the running balance as ground truth. If the balance increases from one row to the next, the transaction must be a deposit — regardless of what the model said. This catches the most common LLM error on bank statements: misclassifying withdrawals as deposits.
+[`reconcile.py:correct_signs_from_balances()`](api/app/reconcile.py) uses the running balance as ground truth. If the balance increases from one row to the next, the transaction must be a deposit - regardless of what the model said. This catches the most common LLM error on bank statements: misclassifying withdrawals as deposits.
 
 [`reconcile.py:reconcile()`](api/app/reconcile.py) then checks the balance equation:
 
@@ -262,7 +262,7 @@ and verifies per-row balance continuity. If either check fails, the document is 
 
 ### Step 4: Confidence Scoring
 
-[`confidence.py`](api/app/confidence.py) applies a deterministic heuristic — no LLM self-assessment:
+[`confidence.py`](api/app/confidence.py) applies a deterministic heuristic - no LLM self-assessment:
 
 ```
 Per transaction:
@@ -284,7 +284,7 @@ If `ensemble_confidence_enabled` is set, the worker runs a second extraction wit
 confidence -= min(0.35, disagreement_score × 0.7)
 ```
 
-Ensemble disagreement is not a quality guarantee — it's an uncertainty signal. Two identical wrong answers score 0 disagreement. But in practice, genuine ambiguity in the source PDF causes the model to vary its output, and that variation is a reliable indicator that a human should look.
+Ensemble disagreement is not a quality guarantee - it's an uncertainty signal. Two identical wrong answers score 0 disagreement. But in practice, genuine ambiguity in the source PDF causes the model to vary its output, and that variation is a reliable indicator that a human should look.
 
 ### Step 6: Rules Post-Processing
 
@@ -324,12 +324,12 @@ Confidence routing is the bridge between fully automated processing and the huma
 
 | Confidence | Reconciliation | Outcome |
 |-----------|----------------|---------|
-| ≥ 0.75 | passed | `verified` — no review required |
+| ≥ 0.75 | passed | `verified` - no review required |
 | ≥ 0.60 | passed | `verified` but P2 priority in dashboard |
 | any | failed | `needs_review` (P1 if confidence < 0.60) |
 | < 0.60 | passed | `needs_review` (P1) |
 
-Priority is computed on every serialization by [`priority.py:compute_priority()`](api/app/priority.py) — it's never stored — so changing the routing rules takes effect immediately for all existing documents.
+Priority is computed on every serialization by [`priority.py:compute_priority()`](api/app/priority.py) - it's never stored - so changing the routing rules takes effect immediately for all existing documents.
 
 The balance reconciliation check in `reconcile()` is treated as a hard constraint, not advisory. A document that fails reconciliation always goes to review regardless of confidence. This is intentional: a high-confidence wrong answer is more dangerous than a low-confidence answer because it might pass unnoticed.
 
@@ -349,13 +349,13 @@ transactions[2].amount: 150.00 → 1500.00
 
 [`learning/categorize.py:categorize_failure()`](api/app/learning/categorize.py) classifies the primary failure mode in priority order: `sign_flip` → `amount_off_by_decimal` → `description_merged` → `description_split` → `date_wrong` → `balance_only` → `header_field` → `multi` → `other`.
 
-This category appears in the `GET /admin/failures` endpoint, which shows failure trends by week and by bank — giving an operator visibility into whether the model is systematically wrong for a specific institution.
+This category appears in the `GET /admin/failures` endpoint, which shows failure trends by week and by bank - giving an operator visibility into whether the model is systematically wrong for a specific institution.
 
 ### Few-Shot Retrieval
 
 On subsequent extractions, [`learning/fewshot.py:retrieve_few_shot()`](api/app/learning/fewshot.py) queries `CorrectionExample` hierarchically:
 
-1. Same bank name AND same layout type (tabular/prose/mixed) — k=3 most recent
+1. Same bank name AND same layout type (tabular/prose/mixed) - k=3 most recent
 2. Same layout type only
 3. Any example, k=3
 
@@ -371,7 +371,7 @@ The worker supports a `variant` parameter on extraction. The ensemble pass uses 
 
 ### Authentication
 
-JWT access tokens (15-minute expiry) + refresh tokens (7-day expiry, stored as bcrypt hashes in `refresh_tokens`). Token rotation on every refresh — a stolen token is invalidated on next use. `POST /auth/logout-all` revokes all sessions for a user immediately.
+JWT access tokens (15-minute expiry) + refresh tokens (7-day expiry, stored as bcrypt hashes in `refresh_tokens`). Token rotation on every refresh - a stolen token is invalidated on next use. `POST /auth/logout-all` revokes all sessions for a user immediately.
 
 Three failed login attempts lock the account. Lockout is stored in Redis (TTL-based) and cleared by `POST /admin/users/{user_id}/unlock`.
 
@@ -397,17 +397,17 @@ Storage format: enc:v1:<base64(12-byte nonce || ciphertext || 16-byte GCM tag)>
 
 A fresh 12-byte nonce is generated per encryption, making repeated-value ciphertext attacks impractical. The master key is `COLUMN_ENCRYPTION_KEY` (64 hex characters = 32 bytes = 256 bits). Legacy plaintext values are returned as-is (backward compatibility during migration); a one-time migration tool at `api/tools/encrypt_pii.py` re-encrypts existing rows.
 
-Balances, dates, and amounts are stored plaintext — they're needed for aggregate queries (reconciliation, insights), and on their own they don't identify an individual without the encrypted name/number.
+Balances, dates, and amounts are stored plaintext - they're needed for aggregate queries (reconciliation, insights), and on their own they don't identify an individual without the encrypted name/number.
 
 ### Object Storage Encryption
 
-MinIO server-side encryption is enabled via `MINIO_KMS_SECRET_KEY`. All objects are encrypted at rest using AES-256. The API passes no encryption headers — SSE is enforced at the MinIO layer so it can't be bypassed by client code.
+MinIO server-side encryption is enabled via `MINIO_KMS_SECRET_KEY`. All objects are encrypted at rest using AES-256. The API passes no encryption headers - SSE is enforced at the MinIO layer so it can't be bypassed by client code.
 
 For production deployments with key-custody requirements, the encryption.md operations doc describes switching to an external KMS (SSE-KMS mode).
 
 ### Malware Scanning
 
-Every uploaded PDF is scanned by ClamAV via the INSTREAM protocol ([`api/app/security/scanner.py`](api/app/security/scanner.py)) before it's written to MinIO. An infected file returns HTTP 422 and is not persisted. If the ClamAV daemon is unreachable, upload proceeds with `scan_status=unscanned` — ClamAV availability is not a hard dependency for upload, but `rescan_documents` (hourly Celery Beat task) will retry. Operators can see unscanned documents in the admin view.
+Every uploaded PDF is scanned by ClamAV via the INSTREAM protocol ([`api/app/security/scanner.py`](api/app/security/scanner.py)) before it's written to MinIO. An infected file returns HTTP 422 and is not persisted. If the ClamAV daemon is unreachable, upload proceeds with `scan_status=unscanned` - ClamAV availability is not a hard dependency for upload, but `rescan_documents` (hourly Celery Beat task) will retry. Operators can see unscanned documents in the admin view.
 
 ### Upload Validation
 
@@ -415,7 +415,7 @@ Every uploaded PDF is scanned by ClamAV via the INSTREAM protocol ([`api/app/sec
 - File extension must be `.pdf`
 - Content-Type must be `application/pdf`
 - First 4 bytes must be `%PDF` (magic byte check, prevents spoofing the Content-Type)
-- Size cap at 50 MB enforced during streaming — the file is never fully buffered in memory
+- Size cap at 50 MB enforced during streaming - the file is never fully buffered in memory
 - Rate limit: 50 uploads per user per hour (slowapi + Redis)
 
 ### Audit Chain
@@ -435,9 +435,9 @@ An advisory lock (`SELECT pg_advisory_lock(1234)`) serializes concurrent inserts
 ### Rate Limiting
 
 slowapi enforces per-user limits on sensitive endpoints:
-- `POST /auth/login` — 5 per 15 minutes
-- `POST /documents` — 50 per hour
-- `POST /documents/{id}/parse` — 20 per hour
+- `POST /auth/login` - 5 per 15 minutes
+- `POST /documents` - 50 per hour
+- `POST /documents/{id}/parse` - 20 per hour
 
 Limits are backed by Redis and survive API restarts.
 
@@ -455,8 +455,8 @@ All routes require a `Bearer` token in the `Authorization` header unless noted.
 
 | Method | Path | Role | Description |
 |--------|------|------|-------------|
-| POST | `/auth/login` | — | Username/password → access + refresh token pair |
-| POST | `/auth/refresh` | — | Rotate refresh token → new pair |
+| POST | `/auth/login` | - | Username/password → access + refresh token pair |
+| POST | `/auth/refresh` | - | Rotate refresh token → new pair |
 | POST | `/auth/logout` | any | Revoke current refresh token |
 | POST | `/auth/logout-all` | any | Revoke all sessions for the current user |
 | GET | `/auth/me` | any | Current user payload (id, username, roles) |
@@ -526,7 +526,7 @@ The manifest signature uses `HMAC-SHA256(key=audit_export_key, msg=canonical_jso
 Query param `range`: `7d`, `30d`, `90d`, or `all`.
 
 Response envelope:
-- **kpis**: `pass_rate`, `mean_confidence`, `auto_approval_rate`, `median_review_time_hours` — each with delta vs previous equivalent period
+- **kpis**: `pass_rate`, `mean_confidence`, `auto_approval_rate`, `median_review_time_hours` - each with delta vs previous equivalent period
 - **alerts**: aged documents >24h, failure-rate spike ≥20%, mean confidence <70%
 - **volume_vs_confidence**: scatter series for chart
 - **pass_rate_trend**: weekly pass rate over the selected range
@@ -550,12 +550,12 @@ Response envelope:
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/health/live` | — | Liveness: always 200 |
-| GET | `/health/ready` | — | Readiness: 200 if Postgres + Redis + MinIO healthy, else 503 |
-| GET | `/health/startup` | — | Startup: 200 when Alembic migrations are current, else 503 |
-| GET | `/health` | — | Alias for `/health/live` |
-| GET | `/health/deps` | — | Alias for `/health/ready` |
-| GET | `/metrics` | — | Prometheus text format |
+| GET | `/health/live` | - | Liveness: always 200 |
+| GET | `/health/ready` | - | Readiness: 200 if Postgres + Redis + MinIO healthy, else 503 |
+| GET | `/health/startup` | - | Startup: 200 when Alembic migrations are current, else 503 |
+| GET | `/health` | - | Alias for `/health/live` |
+| GET | `/health/deps` | - | Alias for `/health/ready` |
+| GET | `/metrics` | - | Prometheus text format |
 
 Kubernetes probe mapping:
 
@@ -625,7 +625,7 @@ Prometheus scrapes `GET /metrics` every 15 seconds ([`ops/prometheus/prometheus.
 |--------|------|--------|
 | `pdf_extract_request_count_total` | Counter | `method`, `path`, `status` |
 | `pdf_extract_request_latency_seconds` | Histogram | `method`, `path` |
-| `pdf_extract_queue_depth` | Gauge | — |
+| `pdf_extract_queue_depth` | Gauge | - |
 
 Latency histograms are recorded via middleware in `main.py`. Queue depth is sampled from the Celery Redis queue via `celery_queue_depth()`.
 
@@ -654,7 +654,7 @@ Set `LOG_FORMAT=json` in production. The `JsonFormatter` emits one JSON object p
 }
 ```
 
-PII redaction runs before any handler emits the line — no account numbers or raw names appear in logs.
+PII redaction runs before any handler emits the line - no account numbers or raw names appear in logs.
 
 ### Log Shipping (optional)
 
@@ -675,9 +675,9 @@ PostgreSQL backup uses pgBackRest with WAL archiving. Architecture:
 - **postgres container**: Custom image ([`ops/postgres/Dockerfile`](ops/postgres/Dockerfile)) that includes pgBackRest and supercronic. Postgres starts with `wal_level=replica`, `archive_mode=on`, and `archive_command='pgbackrest --stanza=main archive-push %p'`. WAL segments are pushed to the backup repository volume (`pgbackups`) immediately after they complete, and at most 60 seconds after the last write (`archive_timeout=60`).
 
 - **pgbackrest-cron sidecar**: Same image, different entrypoint ([`ops/postgres/pgbackrest-cron-entrypoint.sh`](ops/postgres/pgbackrest-cron-entrypoint.sh)). Waits for postgres to be ready, creates the stanza if it doesn't exist, then runs supercronic against [`ops/postgres/backup-schedule`](ops/postgres/backup-schedule):
-  - `0 2 * * *` — full backup
-  - `5 2 * * *` — expire backups older than 7 days
-  - `0 3 * * 0` — pgBackRest integrity check
+  - `0 2 * * *` - full backup
+  - `5 2 * * *` - expire backups older than 7 days
+  - `0 3 * * 0` - pgBackRest integrity check
 
 MinIO backup uses continuous mirroring. `minio-sync` runs `mc mirror --watch primary/documents replica/documents-backup` continuously, so RPO for object storage is approximately seconds.
 
@@ -744,7 +744,7 @@ Production secrets:
 
 | Variable | Purpose | Rotation procedure |
 |----------|---------|-------------------|
-| `JWT_SECRET` | Sign access tokens | Add old value to `JWT_PREVIOUS_SECRETS`, update `JWT_SECRET`, deploy — old tokens remain valid until expiry |
+| `JWT_SECRET` | Sign access tokens | Add old value to `JWT_PREVIOUS_SECRETS`, update `JWT_SECRET`, deploy - old tokens remain valid until expiry |
 | `JWT_KEY_ID` | `kid` header for rotation tracking | Update alongside `JWT_SECRET` |
 | `POSTGRES_PASSWORD` | Database auth | Update external secret → restart postgres + api + worker containers → verify `/health/ready` |
 | `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | Object storage auth | Create new key in MinIO console → deploy with new values → test → revoke old key |
@@ -759,7 +759,7 @@ Two independent layers:
 
 1. **Column-level** (Postgres): `account_holder` and `account_number` are AES-256-GCM encrypted before storage. Key: `COLUMN_ENCRYPTION_KEY`. Implementation: [`api/app/crypto.py`](api/app/crypto.py).
 
-2. **Object-level** (MinIO): All PDF objects are AES-256 encrypted by MinIO's built-in KMS, keyed by `MINIO_KMS_SECRET_KEY`. No application code change required — SSE is enforced at the storage layer.
+2. **Object-level** (MinIO): All PDF objects are AES-256 encrypted by MinIO's built-in KMS, keyed by `MINIO_KMS_SECRET_KEY`. No application code change required - SSE is enforced at the storage layer.
 
 For key-custody separation in regulated environments, both layers can be migrated to external KMS (HashiCorp Vault, AWS KMS, GCP KMS). The MinIO SSE-S3 → SSE-KMS migration procedure is documented in [`docs/operations/encryption.md`](docs/operations/encryption.md).
 
@@ -773,25 +773,25 @@ All settings are read from environment variables via pydantic-settings ([`api/ap
 |----------|---------|-------------|
 | `APP_ENV` | `development` | Set to `production` to enforce security checks |
 | `DATABASE_URL` | constructed from parts | Full Postgres DSN |
-| `POSTGRES_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_DB` | — | Used to build DATABASE_URL |
+| `POSTGRES_HOST` / `_PORT` / `_USER` / `_PASSWORD` / `_DB` | - | Used to build DATABASE_URL |
 | `REDIS_URL` | constructed | Redis DSN for Celery broker |
 | `REDIS_RESULT_URL` | constructed | Redis DSN for Celery result backend |
 | `MINIO_ENDPOINT` | constructed | MinIO host:port |
-| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | — | MinIO credentials |
+| `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` | - | MinIO credentials |
 | `MINIO_BUCKET` | `documents` | Bucket name |
 | `MINIO_USE_SSL` | `false` | Enable TLS for MinIO connection |
-| `MINIO_KMS_SECRET_KEY` | — | Enables MinIO SSE-S3 AES-256 encryption |
+| `MINIO_KMS_SECRET_KEY` | - | Enables MinIO SSE-S3 AES-256 encryption |
 | `CLAMAV_HOST` | `clamav` | ClamAV daemon hostname |
 | `CLAMAV_PORT` | `3310` | ClamAV daemon port |
-| `JWT_SECRET` | — | Required; production rejects default dev value |
+| `JWT_SECRET` | - | Required; production rejects default dev value |
 | `JWT_KEY_ID` | `v1` | `kid` header value for key rotation tracking |
-| `JWT_PREVIOUS_SECRETS` | — | Comma-separated old secrets; validated before rejection |
-| `COLUMN_ENCRYPTION_KEY` | — | 64 hex chars (32 bytes); required for PII encryption |
-| `AUDIT_EXPORT_KEY` | — | HMAC key for evidence ZIP; falls back to `JWT_SECRET` |
+| `JWT_PREVIOUS_SECRETS` | - | Comma-separated old secrets; validated before rejection |
+| `COLUMN_ENCRYPTION_KEY` | - | 64 hex chars (32 bytes); required for PII encryption |
+| `AUDIT_EXPORT_KEY` | - | HMAC key for evidence ZIP; falls back to `JWT_SECRET` |
 | `LLM_BACKEND` | `ollama` | `ollama` or `openai` |
 | `OLLAMA_BASE_URL` | `http://host.docker.internal:11434` | Ollama API endpoint |
 | `OLLAMA_MODEL` | `qwen2.5vl:7b` | Model name |
-| `OPENAI_API_KEY` | — | Required when `LLM_BACKEND=openai` |
+| `OPENAI_API_KEY` | - | Required when `LLM_BACKEND=openai` |
 | `CORS_ORIGINS` | `["http://localhost:5173"]` | Allowlist for CORS |
 | `LOG_FORMAT` | `text` | Set to `json` for structured logging |
 | `FEW_SHOT_ENABLED` | `true` | Enable few-shot retrieval from correction examples |
@@ -811,7 +811,7 @@ All settings are read from environment variables via pydantic-settings ([`api/ap
 git clone <repo>
 cd pdf-extract
 cp .env.example .env
-# Edit .env — set POSTGRES_PASSWORD, MINIO credentials, JWT_SECRET, COLUMN_ENCRYPTION_KEY
+# Edit .env - set POSTGRES_PASSWORD, MINIO credentials, JWT_SECRET, COLUMN_ENCRYPTION_KEY
 
 # 2. Start all services
 docker compose up -d
@@ -848,7 +848,7 @@ Services and their default ports:
 | Grafana | 3000 |
 | ClamAV | 3310 |
 
-**Hot reload**: The `api` and `worker` services mount `./api:/app` as a volume. `uvicorn --reload` restarts the API on file changes. The worker does **not** auto-reload — restart it manually after worker code changes: `docker compose restart worker`.
+**Hot reload**: The `api` and `worker` services mount `./api:/app` as a volume. `uvicorn --reload` restarts the API on file changes. The worker does **not** auto-reload - restart it manually after worker code changes: `docker compose restart worker`.
 
 **Without Docker** (API only):
 
@@ -890,7 +890,7 @@ npx playwright test
 make test-restore
 ```
 
-Test configuration is in [`api/tests/conftest.py`](api/tests/conftest.py). Tests spin up against a real Postgres instance (not mocked) — the test DB URL defaults to `localhost:5435` with `POSTGRES_PASSWORD`. Isolation is via per-test transactions rolled back after each test.
+Test configuration is in [`api/tests/conftest.py`](api/tests/conftest.py). Tests spin up against a real Postgres instance (not mocked) - the test DB URL defaults to `localhost:5435` with `POSTGRES_PASSWORD`. Isolation is via per-test transactions rolled back after each test.
 
 CI runs the full suite on every push and PR. The restore test runs as a weekly cron (`0 4 * * 0` UTC Sunday) via [`.github/workflows/restore-test.yml`](.github/workflows/restore-test.yml) and can also be triggered manually via `workflow_dispatch`.
 
@@ -1014,9 +1014,9 @@ pdf-extract/
 
 ## Key Design Decisions (for Contributors)
 
-**Deterministic confidence over LLM self-assessment.** LLM confidence scores are not calibrated: a model can be 95% confident about a wrong answer. Our confidence metric uses observable signals only — field presence, reconciliation pass/fail, source type, ensemble disagreement. Changing the confidence formula requires only changing `confidence.py`; no model retraining needed.
+**Deterministic confidence over LLM self-assessment.** LLM confidence scores are not calibrated: a model can be 95% confident about a wrong answer. Our confidence metric uses observable signals only - field presence, reconciliation pass/fail, source type, ensemble disagreement. Changing the confidence formula requires only changing `confidence.py`; no model retraining needed.
 
-**Reconciliation as a hard routing constraint.** Balance equations are math. If the extracted transactions don't sum to the stated opening and closing balances (within ±0.01), something is wrong — either the extraction missed a transaction, or misclassified a sign. The document goes to review. There is no threshold or override here.
+**Reconciliation as a hard routing constraint.** Balance equations are math. If the extracted transactions don't sum to the stated opening and closing balances (within ±0.01), something is wrong - either the extraction missed a transaction, or misclassified a sign. The document goes to review. There is no threshold or override here.
 
 **Append-only history everywhere.** `DocumentVersion`, `AuditLog`, and `ParseJob` rows are never updated after creation. `Transaction` rows can be edited by reviewers, but each edit creates a new `DocumentVersion` snapshot and an audit entry. The original LLM output is always recoverable.
 
@@ -1024,4 +1024,4 @@ pdf-extract/
 
 **Few-shot over fine-tuning.** Fine-tuning a model requires a GPU training environment, a labeled dataset of sufficient size, and a deployment pipeline for model weights. Few-shot retrieval requires a database query and some prompt engineering. For a bounded set of bank statement formats, a curated set of correction examples as context outperforms a zero-shot prompt with much lower operational complexity.
 
-**Sidecar backup pattern, not backup-from-primary.** Running pgBackRest backups from inside the postgres container creates a naming conflict (the image's entrypoint would need modification) and couples backup scheduling to the primary service's lifecycle. The sidecar shares only the data volume and connects via TCP for checkpoint control — it's independently restartable and uses the same image, reducing build complexity.
+**Sidecar backup pattern, not backup-from-primary.** Running pgBackRest backups from inside the postgres container creates a naming conflict (the image's entrypoint would need modification) and couples backup scheduling to the primary service's lifecycle. The sidecar shares only the data volume and connects via TCP for checkpoint control - it's independently restartable and uses the same image, reducing build complexity.
