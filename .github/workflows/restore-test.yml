@@ -21,19 +21,19 @@ jobs:
           APP_ENV=ci
           API_PORT=8003
           POSTGRES_USER=pdfextract
-          POSTGRES_PASSWORD=ci-restore-test-password
+          POSTGRES_PASSWORD=${{ secrets.CI_RESTORE_POSTGRES_PASSWORD || 'ci-restore-test-password' }}
           POSTGRES_DB=pdfextract_dev
           POSTGRES_PORT=5434
           REDIS_PORT=6380
-          MINIO_ROOT_USER=minioroot
-          MINIO_ROOT_PASSWORD=miniopassword
+          MINIO_ROOT_USER=${{ secrets.CI_RESTORE_MINIO_ROOT_USER || 'minioroot' }}
+          MINIO_ROOT_PASSWORD=${{ secrets.CI_RESTORE_MINIO_PASSWORD || 'miniopassword' }}
           MINIO_API_PORT=9000
           MINIO_CONSOLE_PORT=9001
-          MINIO_ACCESS_KEY=minioroot
-          MINIO_SECRET_KEY=miniopassword
-          MINIO_KMS_SECRET_KEY=restore-test-kms-key-32-chars-long!!
+          MINIO_ACCESS_KEY=${{ secrets.CI_RESTORE_MINIO_ROOT_USER || 'minioroot' }}
+          MINIO_SECRET_KEY=${{ secrets.CI_RESTORE_MINIO_PASSWORD || 'miniopassword' }}
+          MINIO_KMS_SECRET_KEY=${{ secrets.CI_RESTORE_MINIO_KMS_KEY || 'restore-test-kms-key-32-chars-long!!' }}
           MINIO_BUCKET=documents
-          JWT_SECRET=ci-jwt-secret-for-restore-test-at-least-32-chars
+          JWT_SECRET=${{ secrets.CI_RESTORE_JWT_SECRET || 'ci-jwt-secret-for-restore-test-at-least-32-chars' }}
           JWT_KEY_ID=ci-v1
           JWT_PREVIOUS_SECRETS=
           CORS_ORIGINS=http://localhost:5173
@@ -49,7 +49,7 @@ jobs:
           bash scripts/test_restore.sh
         env:
           POSTGRES_USER: pdfextract
-          POSTGRES_PASSWORD: ci-restore-test-password
+          POSTGRES_PASSWORD: ${{ secrets.CI_RESTORE_POSTGRES_PASSWORD || 'ci-restore-test-password' }}
           POSTGRES_DB: pdfextract_dev
 
       - name: Upload restore test logs on failure

@@ -62,7 +62,7 @@ step "4/9" "Running database migrations..."
 $DC run --rm --no-deps \
   -e POSTGRES_HOST=postgres \
   -e POSTGRES_USER="${PG_USER}" \
-  -e POSTGRES_PASSWORD="${PG_PASS}" \
+  -e "POSTGRES_PASSWORD=${PG_PASS}" \
   -e POSTGRES_DB="${PG_DB}" \
   -e POSTGRES_PORT=5432 \
   api alembic upgrade head
